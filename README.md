@@ -38,11 +38,11 @@ GitHub Actions **Deploy production** still runs on push to `main` and reads Verc
    - `INGEST_API_KEY` (optional; required for `/api/invitations`)
 4. Create a Vercel token: [vercel.com/account/tokens](https://vercel.com/account/tokens).
 5. Copy **Project ID** and **Team ID** from Vercel → Project Settings → General (they also appear in `.vercel/project.json` after `npx vercel link`).
-6. In GitHub → **Settings → Environments → Prod**, add:
-   - `VERCEL_TOKEN`
-   - `VERCEL_ORG_ID`
-   - `VERCEL_PROJECT_ID`
-7. Open GitHub → **Actions** and confirm **Deploy production** is green.
+6. In GitHub → **Settings → Environments → Prod**, add these **Vercel** values (not GitHub IDs):
+   - `VERCEL_TOKEN` — from [vercel.com/account/tokens](https://vercel.com/account/tokens), same Vercel account that owns the project
+   - `VERCEL_ORG_ID` — Vercel **Team ID**, starts with `team_` (Hobby team → Settings → General). Never the GitHub environment number in the URL.
+   - `VERCEL_PROJECT_ID` — Vercel **Project ID**, starts with `prj_` (project → Settings → General)
+7. Open GitHub → **Actions** and confirm **Deploy production** is green. `Project not found` means the Team ID, Project ID, or token belong to different Vercel accounts, or the two IDs were swapped.
 
 After the first deploy, point `APP_URL` at the live URL and apply the schema once:
 
