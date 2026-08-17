@@ -1,0 +1,234 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum InterviewStatus {
+  INVITED
+  OPENED
+  CONSENTED
+  STARTED
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+  FAILED
+  ANALYZING
+  ANALYZED
+  REVIEWED
+  FOLLOW_UP_READY
+}
+
+enum MessageRole {
+  user
+  assistant
+  system
+  tool
+}
+
+enum MessageSource {
+  realtime
+  manual
+}
+
+enum EvidenceType {
+  EXPLICIT
+  INFERRED
+  DERIVED
+}
+
+model Company {
+  id            String   @id @default(uuid()) @db.Uuid
+  name          String
+  legalName     String?
+  website       String?
+  vertical      String
+  employeeRange String?
+  notes         String?
+  verifiedFacts Json     @default("[]")
+  hypotheses    Json     @default("[]")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  contacts   Contact[]
+  interviews Interview[]
+}
+
+model Contact {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @db.Uuid
+  firstName         String
+  lastName          String?
+  role              String
+  email             String?
+  linkedinUrl       String?
+  phone             String?
+  preferredLanguage String   @default("hy")
+  createdAt         DateTime @default(now())
+
+  company    Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  interviews Interview[]
+}
+
+model Interview {
+  id              String          @id @default(uuid()) @db.Uuid
+  companyId       String          @db.Uuid
+  contactId       String          @db.Uuid
+  publicTokenHash String          @unique
+  status          InterviewStatus @default(INVITED)
+  language        String          @default("hy")
+  promptVersion   String          @default("interviewer-v1")
+  analysisVersion String?
+  schemaVersion   String?
+  openedAt        DateTime?
+  consentedAt     DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  durationSeconds Int?
+  state           Json?
+  reviewNotes     String?
+  createdAt       DateTime        @default(now())
+
+  company   Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contact   Contact             @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  messages  InterviewMessage[]
+  events    InterviewEvent[]
+  facts     InterviewFact[]
+  processes Process[]
+  analyses  InterviewAnalysis[]
+}
+
+model InterviewMessage {
+  id          String        @id @default(uuid()) @db.Uuid
+  interviewId String        @db.Uuid
+  sequenceNo  Int
+  role        MessageRole
+  contentText String
+  source      MessageSource @default(realtime)
+  startedAt   DateTime?
+  endedAt     DateTime?
+  createdAt   DateTime      @default(now())
+
+  interview Interview         @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  evidence  ProcessEvidence[]
+
+  @@unique([interviewId, sequenceNo])
+}
+
+model InterviewEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  interviewId String   @db.Uuid
+  type        String
+  payload     Json?
+  createdAt   DateTime @default(now())
+
+  interview Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+}
+
+model InterviewFact {
+  id              String   @id @default(uuid()) @db.Uuid
+  interviewId     String   @db.Uuid
+  category        String
+  value           String
+  processName     String?
+  evidenceSummary String?
+  createdAt       DateTime @default(now())
+
+  interview Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+}
+
+model Process {
+  id                    String   @id @default(uuid()) @db.Uuid
+  interviewId           String   @db.Uuid
+  name                  String
+  description           String?
+  trigger               String?
+  frequencyRaw          String?
+  transactionsDayMin    Float?
+  transactionsDayMax    Float?
+  transactionsMonthMin  Float?
+  transactionsMonthMax  Float?
+  minutesTransactionMin Float?
+  minutesTransactionMax Float?
+  employeesInvolved     Int?
+  manualHoursMonthMin   Float?
+  manualHoursMonthMax   Float?
+  fteMin                Float?
+  fteMax                Float?
+  painScore             Int?
+  automationScore       Float?
+  confidence            Float?
+  clusterTag            String?
+  createdAt             DateTime @default(now())
+
+  interview    Interview          @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  steps        ProcessStep[]
+  evidence     ProcessEvidence[]
+  systems      ProcessSystem[]
+  opportunity  Opportunity?
+}
+
+model ProcessStep {
+  id        String  @id @default(uuid()) @db.Uuid
+  processId String  @db.Uuid
+  stepNo    Int
+  actor     String?
+  action    String
+  system    String?
+  manual    Boolean?
+  input     String?
+  output    String?
+
+  process Process @relation(fields: [processId], references: [id], onDelete: Cascade)
+}
+
+model ProcessEvidence {
+  id           String       @id @default(uuid()) @db.Uuid
+  processId    String       @db.Uuid
+  messageId    String?      @db.Uuid
+  fieldName    String
+  evidenceText String
+  evidenceType EvidenceType
+  confidence   Float?
+
+  process Process           @relation(fields: [processId], references: [id], onDelete: Cascade)
+  message InterviewMessage? @relation(fields: [messageId], references: [id])
+}
+
+model ProcessSystem {
+  id        String  @id @default(uuid()) @db.Uuid
+  processId String  @db.Uuid
+  name      String
+  category  String?
+
+  process Process @relation(fields: [processId], references: [id], onDelete: Cascade)
+}
+
+model InterviewAnalysis {
+  id            String   @id @default(uuid()) @db.Uuid
+  interviewId   String   @db.Uuid
+  model         String
+  promptVersion String
+  schemaVersion String
+  rawJson       Json
+  createdAt     DateTime @default(now())
+
+  interview Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+}
+
+model Opportunity {
+  id                      String  @id @default(uuid()) @db.Uuid
+  processId               String  @unique @db.Uuid
+  scoreTotal              Float
+  scoreBreakdown          Json
+  automationHypothesis    String?
+  integrationRequirements Json?
+  risks                   Json?
+  pilotDataNeeded         Json?
+  pilotReadiness          String?
+
+  process Process @relation(fields: [processId], references: [id], onDelete: Cascade)
+}

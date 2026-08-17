@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+:root {
+  --background: #fafafa;
+  --foreground: #18181b;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), var(--font-armenian), system-ui, sans-serif;
+}
+
+input, textarea, select, button {
+  font: inherit;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.field label {
+  font-size: 0.8rem;
+  color: #52525b;
+}
+
+.field input, .field textarea, .field select {
+  border: 1px solid #e4e4e7;
+  background: white;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.7rem;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.85rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: #18181b;
+  color: white;
+}
+
+.btn-secondary {
+  background: white;
+  color: #18181b;
+  border: 1px solid #e4e4e7;
+}
+
+.card {
+  background: white;
+  border: 1px solid #e4e4e7;
+  border-radius: 0.75rem;
+  padding: 1rem;
+}
