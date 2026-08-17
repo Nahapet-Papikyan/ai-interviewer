@@ -10,7 +10,7 @@ import { UseCases } from "@/components/landing/UseCases";
 
 export default function HomePage() {
   return (
-    <main>
+    <>
       <Hero />
       <ProblemSection />
       <HowItWorks />
@@ -20,6 +20,6 @@ export default function HomePage() {
       <Outcomes />
       <AssessmentCTA />
       <FAQ />
-    </main>
+    </>
   );
 }

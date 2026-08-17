@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function AssessmentPage() {
   return (
-    <main className="px-5 py-12 sm:px-8 sm:py-16">
+    <div className="px-5 py-12 sm:px-8 sm:py-16">
       <div className="mx-auto grid w-full max-w-5xl items-center gap-10 lg:grid-cols-[1.05fr_0.95fr]">
         <div>
           <p className="text-[11px] font-semibold tracking-[0.18em] text-brand uppercase">
@@ -33,6 +33,6 @@ export default function AssessmentPage() {
         <AssessmentStart />
       </div>
       <p className="sr-only">Assessment for {SITE_NAME}</p>
-    </main>
+    </div>
   );
 }

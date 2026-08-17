@@ -53,6 +53,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
+      data-scroll-behavior="smooth"
       className={`${geistSans.variable} ${geistMono.variable} ${notoArmenian.variable} h-full scroll-smooth antialiased`}
     >
       <body className="min-h-full bg-zinc-50 text-zinc-950">{children}</body>
