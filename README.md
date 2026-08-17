@@ -32,10 +32,11 @@ Every push to `main` runs **Deploy production**. Pull requests run **Deploy prev
    - `INGEST_API_KEY` (optional; required for `/api/invitations`)
 4. Create a Vercel token: [vercel.com/account/tokens](https://vercel.com/account/tokens).
 5. Copy **Project ID** and **Org/Team ID** from Vercel → Project Settings → General (they also appear in `.vercel/project.json` after `npx vercel link`).
-6. In GitHub → **Settings → Secrets and variables → Actions**, add:
+6. In GitHub → **Settings → Environments → Prod**, add:
    - `VERCEL_TOKEN`
    - `VERCEL_ORG_ID`
-   - `VERCEL_PROJECT_ID`
+   - `VERCEL_PROJECT_ID`  
+   The production workflow reads these from the **Prod** environment, not from repository secrets.
 7. Open GitHub → **Actions** and confirm **Deploy production** is green. If it fails on missing secrets, step 6 is incomplete.
 
 Optional, if you want Vercel’s own Git deploys later: add the email from `git log -1 --format='%ae'` to [GitHub emails](https://github.com/settings/emails) and [Vercel emails](https://vercel.com/account/settings), then remove `"git": { "deploymentEnabled": false }` from `vercel.json`. Until then, ignore the Vercel “Fix Git Configuration” prompt.
