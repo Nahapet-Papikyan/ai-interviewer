@@ -32,6 +32,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const created = await issueInterviewInvitation(parsed.data, request.nextUrl.origin);
-  return NextResponse.json(created);
+  try {
+    const created = await issueInterviewInvitation(parsed.data, request.nextUrl.origin);
+    return NextResponse.json(created);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Invitation failed";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
