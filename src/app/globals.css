@@ -84,7 +84,7 @@ input, textarea, select, button {
   width: 6px;
   height: 6px;
   border-radius: 999px;
-  background: #6366f1;
+  background: #1687f8;
   animation: voice-dot 1.05s ease-in-out infinite;
 }
 
@@ -111,7 +111,7 @@ input, textarea, select, button {
   position: absolute;
   inset: 12%;
   border-radius: 999px;
-  border: 1.5px solid rgb(99 102 241 / 0.55);
+  border: 1.5px solid rgb(22 135 248 / 0.5);
   pointer-events: none;
   animation: mic-ring 1.9s ease-out infinite;
 }

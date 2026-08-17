@@ -16,6 +16,7 @@ export default async function InterviewsPage({
       company: true,
       contact: true,
       processes: { include: { opportunity: true } },
+      _count: { select: { messages: true } },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -40,9 +41,11 @@ export default async function InterviewsPage({
               <th className="px-4 py-2 font-medium">Vertical</th>
               <th className="px-4 py-2 font-medium">Status</th>
               <th className="px-4 py-2 font-medium">Duration</th>
+              <th className="px-4 py-2 font-medium">Turns</th>
               <th className="px-4 py-2 font-medium">Processes</th>
               <th className="px-4 py-2 font-medium">Best score</th>
               <th className="px-4 py-2 font-medium">Pilot</th>
+              <th className="px-4 py-2 font-medium"></th>
             </tr>
           </thead>
           <tbody>
@@ -66,11 +69,17 @@ export default async function InterviewsPage({
                   <td className="px-4 py-2">
                     {interview.durationSeconds ? `${Math.round(interview.durationSeconds / 60)}m` : "—"}
                   </td>
+                  <td className="px-4 py-2">{interview._count.messages}</td>
                   <td className="px-4 py-2">{interview.processes.length}</td>
                   <td className="px-4 py-2">
                     {bestProcess ? `${bestProcess.name} (${Math.round(bestProcess.opportunity?.scoreTotal ?? 0)})` : "—"}
                   </td>
                   <td className="px-4 py-2">{bestProcess?.opportunity?.pilotReadiness ?? "—"}</td>
+                  <td className="px-4 py-2 text-right">
+                    <Link href={`/interviews/${interview.id}#transcript`} className="font-medium hover:underline">
+                      {interview._count.messages ? "Read chat" : "Open"}
+                    </Link>
+                  </td>
                 </tr>
               );
             })}

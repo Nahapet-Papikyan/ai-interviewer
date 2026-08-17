@@ -75,7 +75,8 @@ export async function runInterviewAnalysis(interviewId: string) {
       throw new Error("Analyzer returned no parsed output");
     }
 
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(
+      async (tx) => {
       await tx.process.deleteMany({ where: { interviewId } });
 
       const analysis = await tx.interviewAnalysis.create({
@@ -190,7 +191,9 @@ export async function runInterviewAnalysis(interviewId: string) {
           schemaVersion: ANALYSIS_SCHEMA_VERSION,
         },
       });
-    });
+    },
+      { timeout: 60_000 },
+    );
 
     return parsed;
   } catch (error) {

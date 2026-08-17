@@ -217,7 +217,7 @@ export function VoiceOrb({
   }
 
   return (
-    <div className="flex shrink-0 flex-col items-center px-4 pb-2 pt-4">
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-col items-center border-b border-white/10 bg-ink-2/55 px-4 pb-4 pt-6 shadow-[0_12px_28px_rgb(0_0_0_/_0.35)] backdrop-blur-xl">
       <button
         type="button"
         disabled={!clickable}
@@ -236,7 +236,7 @@ export function VoiceOrb({
               ? "Սեղմեք՝ խոսափողն անջատելու համար"
               : undefined
         }
-        className={`relative flex h-[148px] w-[148px] items-center justify-center sm:h-[168px] sm:w-[168px] ${
+        className={`pointer-events-auto relative flex h-[222px] w-[222px] items-center justify-center sm:h-[252px] sm:w-[252px] ${
           clickable ? "cursor-pointer" : "cursor-default"
         }`}
       >
@@ -249,13 +249,13 @@ export function VoiceOrb({
         <canvas ref={canvasRef} className="h-full w-full" />
         {showEnableHint ? (
           <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white/80 text-zinc-800 shadow-sm backdrop-blur-sm">
+            <span className="flex h-[4.5rem] w-[4.5rem] items-center justify-center rounded-full border border-white/12 bg-ink/55 text-cloud shadow-sm backdrop-blur-sm">
               <MicIcon off={mode === "live" && userMuted} />
             </span>
           </span>
         ) : null}
       </button>
-      <p ref={captionRef} className="mt-1 text-center text-xs font-medium text-zinc-600">
+      <p ref={captionRef} className="mt-1 text-center text-xs font-medium text-mist">
         {caption(mode, userMuted, "none", aiSpeaking, listeningOpen)}
       </p>
     </div>
@@ -264,7 +264,7 @@ export function VoiceOrb({
 
 function MicIcon({ off }: { off?: boolean }) {
   return (
-    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <svg viewBox="0 0 24 24" className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="1.8">
       {off ? (
         <>
           <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.3V12a3 3 0 0 1-.2 1.1" />

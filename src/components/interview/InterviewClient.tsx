@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { OpenAIRealtimeWebRTC, RealtimeAgent, RealtimeSession, tool } from "@openai/agents/realtime";
 import { z } from "zod";
 import { BrandLogo } from "@/components/brand/Logo";
-import { MicPrompt } from "@/components/interview/MicPrompt";
+import { MicPermissionModal } from "@/components/interview/MicPermissionModal";
 import { VoiceOrb, type VoiceLevels } from "@/components/interview/VoiceOrb";
 
 type Turn = { role: "user" | "assistant" | "system" | "tool"; content: string };
@@ -140,15 +140,34 @@ export function InterviewClient({
   const [userMuted, setUserMuted] = useState(false);
   const [listeningOpen, setListeningOpen] = useState(false);
   const [micDenied, setMicDenied] = useState(false);
+  const [micUnavailable, setMicUnavailable] = useState(false);
+  const endingRef = useRef(false);
   mutedRef.current = muted || aiSpeaking || !listeningOpenRef.current;
 
   function applyMicGate() {
-    const off = userMutedRef.current || aiSpeakingRef.current || !listeningOpenRef.current;
-    sessionRef.current?.mute(off);
+    const off = userMutedRef.current || aiSpeakingRef.current || !listeningOpenRef.current || endingRef.current;
+    try {
+      sessionRef.current?.mute(off);
+    } catch {
+      // session may already be closed
+    }
     mediaStreamRef.current?.getAudioTracks().forEach((track) => {
       track.enabled = !off;
     });
     setMuted((prev) => (prev === off ? prev : off));
+  }
+
+  function closeSessionSoon() {
+    window.setTimeout(() => {
+      try {
+        sessionRef.current?.close();
+      } catch {
+        // already closed
+      }
+      sessionRef.current = null;
+      audioCleanupRef.current?.();
+      audioCleanupRef.current = null;
+    }, 400);
   }
 
   function clearInputAudio() {
@@ -200,10 +219,15 @@ export function InterviewClient({
       window.clearTimeout(aiHoldTimerRef.current);
       aiHoldTimerRef.current = null;
     }
-    if (aiSpeakingRef.current) return;
+    if (aiSpeakingRef.current) {
+      applyMicGate();
+      clearInputAudio();
+      return;
+    }
     aiSpeakingRef.current = true;
     setAiSpeaking(true);
     applyMicGate();
+    clearInputAudio();
   }
 
   function endAiSpeech() {
@@ -212,13 +236,14 @@ export function InterviewClient({
       aiHoldTimerRef.current = null;
       aiSpeakingRef.current = false;
       setAiSpeaking(false);
+      clearInputAudio();
       if (introPendingRef.current) {
         introPendingRef.current = false;
         openListening();
         return;
       }
       applyMicGate();
-    }, 400);
+    }, 700);
   }
 
   function toggleUserMic() {
@@ -226,12 +251,6 @@ export function InterviewClient({
     userMutedRef.current = !userMutedRef.current;
     setUserMuted(userMutedRef.current);
     applyMicGate();
-  }
-
-  function continueWithText() {
-    setMicDenied(false);
-    setStatus("text");
-    setError("");
   }
 
   const tools = useMemo(
@@ -274,6 +293,8 @@ export function InterviewClient({
           reason: z.string(),
         }),
         async execute() {
+          endingRef.current = true;
+          applyMicGate();
           const current = sessionRef.current;
           const historyTurns = mergeTurns(
             latestTurnsRef.current,
@@ -281,8 +302,8 @@ export function InterviewClient({
           );
           latestTurnsRef.current = historyTurns;
           await sessionAction(token, "complete", { turns: historyTurns });
-          current?.close();
           setStatus("ended");
+          closeSessionSoon();
           return "Interview marked complete.";
         },
       }),
@@ -315,11 +336,17 @@ export function InterviewClient({
     setStatus("connecting");
     setError("");
     setMicDenied(false);
+    setMicUnavailable(false);
     setUserMuted(false);
     setListeningOpen(false);
     userMutedRef.current = false;
     listeningOpenRef.current = false;
     try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setMicUnavailable(true);
+        setStatus("idle");
+        return;
+      }
       audioCleanupRef.current?.();
       const mediaStreamPromise = navigator.mediaDevices.getUserMedia({
         audio: {
@@ -348,6 +375,14 @@ export function InterviewClient({
       await audioCtx.resume();
 
       const res = await tokenPromise;
+      if (res.status === 409) {
+        mediaStream.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+        void audioCtx.close();
+        endingRef.current = true;
+        setStatus("ended");
+        return;
+      }
       if (!res.ok) {
         mediaStream.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
@@ -416,6 +451,7 @@ export function InterviewClient({
         persistHistory(history as unknown[]).catch(() => undefined);
       });
       session.on("error", () => {
+        if (endingRef.current) return;
         void attemptReconnect();
       });
       session.on("audio_start", () => {
@@ -432,16 +468,22 @@ export function InterviewClient({
       });
       session.on("audio_interrupted", () => {
         levelsRef.current.ai = 0;
-        endAiSpeech();
+        beginAiSpeech();
+        clearInputAudio();
       });
       session.on("transport_event", (event) => {
-        if (!listeningOpenRef.current) {
+        if (event.type === "response.created" || event.type === "output_audio_buffer.started") {
+          beginAiSpeech();
+        }
+        const ignoreUserAudio = !listeningOpenRef.current || aiSpeakingRef.current || endingRef.current;
+        if (ignoreUserAudio) {
           if (
             event.type === "input_audio_buffer.speech_started" ||
             event.type === "input_audio_buffer.speech_stopped" ||
             event.type === "input_audio_buffer.committed"
           ) {
             clearInputAudio();
+            applyMicGate();
           }
           return;
         }
@@ -515,15 +557,16 @@ export function InterviewClient({
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
       const name = err instanceof DOMException ? err.name : "";
-      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+      if (name === "NotAllowedError" || name === "PermissionDeniedError" || name === "SecurityError") {
         setMicDenied(true);
         setStatus("idle");
         setError("");
         return;
       }
-      if (name === "NotFoundError") {
-        setError("Խոսափող չի գտնվել այս սարքում։ Կարող եք շարունակել տեքստով։");
-        setStatus("text");
+      if (name === "NotFoundError" || name === "NotReadableError" || name === "OverconstrainedError") {
+        setMicUnavailable(true);
+        setStatus("idle");
+        setError("");
         return;
       }
       setError(err instanceof Error ? err.message : "Կապը չհաջողվեց");
@@ -534,6 +577,7 @@ export function InterviewClient({
   }
 
   async function attemptReconnect() {
+    if (endingRef.current) return;
     if (reconnects.current >= 1) {
       setStatus("text");
       setError("Ձայնային կապը ընդհատվեց։ Կարող եք շարունակել տեքստով։");
@@ -553,6 +597,8 @@ export function InterviewClient({
   }
 
   async function endInterview() {
+    endingRef.current = true;
+    applyMicGate();
     const historyTurns = mergeTurns(
       latestTurnsRef.current,
       sessionRef.current ? extractTurns(sessionRef.current.history as unknown[]) : [],
@@ -583,6 +629,33 @@ export function InterviewClient({
   }
 
   useEffect(() => {
+    if (!consented || typeof navigator === "undefined" || !navigator.permissions?.query) return;
+    let permission: PermissionStatus | null = null;
+    function sync() {
+      if (!permission) return;
+      if (permission.state === "denied") {
+        setMicDenied(true);
+        setMicUnavailable(false);
+      } else if (permission.state === "granted") {
+        setMicDenied(false);
+      }
+    }
+    void navigator.permissions
+      .query({ name: "microphone" as PermissionName })
+      .then((result) => {
+        permission = result;
+        sync();
+        result.addEventListener("change", sync);
+      })
+      .catch(() => {
+        // Safari and some browsers do not expose microphone permission state.
+      });
+    return () => {
+      permission?.removeEventListener("change", sync);
+    };
+  }, [consented]);
+
+  useEffect(() => {
     return () => {
       if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
       sessionRef.current?.close();
@@ -598,25 +671,35 @@ export function InterviewClient({
 
   if (!consented) {
     return (
-      <div className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-6 py-16">
-        <BrandLogo size={72} priority className="mb-6" />
-        <p className="text-sm text-zinc-500">{companyName}</p>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight">Բարև, {firstName}</h1>
-        <div className="mt-6 space-y-3 text-[15px] leading-7 text-zinc-700">
-          <p>
-            Սա արհեստական բանականությամբ աշխատող հարցազրույց է՝ հասկանալու կրկնվող
-            գործընթացները, որոնք ժամանակ են խլում {companyName}-ում։ Սա վաճառքի զանգ չէ։
-          </p>
-          <p>Սովորաբար տևում է 15–20 րոպե։ Դուք նշված եք որպես {role}։</p>
-          <ul className="space-y-2 rounded-2xl border border-zinc-200 bg-white p-4 text-sm">
-            <li>Պահվում է խոսակցության տեքստը և կառուցվածքային եզրակացությունները։</li>
-            <li>Հում աուդիո չի պահվում։</li>
-            <li>Խնդրում ենք չկիսել գաղտնաբառեր, հաճախորդների տվյալներ կամ բանկային տվյալներ։</li>
-          </ul>
+      <div className="relative mx-auto flex min-h-screen max-w-lg flex-col justify-center px-6 py-16">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgb(22_135_248_/_0.14),transparent_48%)]"
+        />
+        <div className="relative">
+          <BrandLogo size={72} priority className="mb-6" />
+          <p className="text-[11px] font-semibold tracking-[0.18em] text-brand uppercase">{companyName}</p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-cloud">Բարև, {firstName}</h1>
+          <div className="mt-6 space-y-3 text-[15px] leading-7 text-mist">
+            <p>
+              Սա արհեստական բանականությամբ աշխատող հարցազրույց է՝ հասկանալու կրկնվող
+              գործընթացները, որոնք ժամանակ են խլում {companyName}-ում։ Սա վաճառքի զանգ չէ։
+            </p>
+            <p>Սովորաբար տևում է 15–20 րոպե։ Դուք նշված եք որպես {role}։</p>
+            <ul className="space-y-2 rounded-2xl border border-white/10 bg-ink-2 p-4 text-sm text-cloud/90">
+              <li>Պահվում է խոսակցության տեքստը և կառուցվածքային եզրակացությունները։</li>
+              <li>Հում աուդիո չի պահվում։</li>
+              <li>Խնդրում ենք չկիսել գաղտնաբառեր, հաճախորդների տվյալներ կամ բանկային տվյալներ։</li>
+            </ul>
+          </div>
+          <button
+            className="mt-8 inline-flex h-11 items-center justify-center rounded-full bg-brand px-5 text-sm font-medium text-white hover:bg-[#3b9bff]"
+            type="button"
+            onClick={acceptConsent}
+          >
+            Համաձայն եմ և սկսել
+          </button>
         </div>
-        <button className="btn mt-8 h-11 px-5" type="button" onClick={acceptConsent}>
-          Համաձայն եմ և սկսել
-        </button>
       </div>
     );
   }
@@ -625,10 +708,8 @@ export function InterviewClient({
     return (
       <div className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-6 py-16">
         <BrandLogo size={72} className="mb-6" />
-        <h1 className="text-2xl font-semibold tracking-tight">Շնորհակալություն, {firstName}</h1>
-        <p className="mt-3 text-[15px] leading-7 text-zinc-600">
-          Հարցազրույցն ավարտված է։ Կարող եք փակել այս էջը։
-        </p>
+        <h1 className="text-3xl font-semibold tracking-tight text-cloud">Շնորհակալություն, {firstName}</h1>
+        <p className="mt-3 text-[15px] leading-7 text-mist">Հարցազրույցն ավարտված է։ Կարող եք փակել այս էջը։</p>
       </div>
     );
   }
@@ -638,44 +719,50 @@ export function InterviewClient({
   const lastTurn = visibleTurns[visibleTurns.length - 1];
   const showAiLiveDots = status === "live" && aiSpeaking && lastTurn?.role !== "assistant";
   const voiceMode = status === "connecting" ? "connecting" : status === "live" ? "live" : "idle";
-  const showMicPrompt = visibleTurns.length === 0 && status !== "live";
+  const showMicGate = status !== "live";
 
   return (
-    <div className="mx-auto flex h-dvh max-w-2xl flex-col overflow-hidden px-4 py-5 sm:px-6">
-      <header className="flex shrink-0 items-start justify-between gap-4 border-b border-zinc-200 pb-4">
+    <div className="relative mx-auto flex h-dvh max-w-2xl flex-col overflow-hidden px-4 py-5 sm:px-6">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgb(22_135_248_/_0.12),transparent_46%)]"
+      />
+      <header className="relative flex shrink-0 items-start justify-between gap-4 border-b border-white/10 pb-4">
         <div className="flex min-w-0 items-start gap-3">
-          <BrandLogo size={40} priority />
+          <BrandLogo size={36} priority />
           <div className="min-w-0">
-            <h1 className="truncate text-lg font-semibold tracking-tight">{companyName}</h1>
-            <div className="mt-1 flex items-center gap-2 text-sm text-zinc-500">
+            <h1 className="truncate text-[15px] font-medium tracking-tight text-cloud">{companyName}</h1>
+            <div className="mt-1 flex items-center gap-2 text-sm text-mist">
               <span
                 className={`inline-block h-2 w-2 rounded-full ${
-                  status === "live" ? "bg-emerald-500" : status === "connecting" ? "bg-amber-400" : "bg-zinc-300"
+                  status === "live" ? "bg-emerald-400" : status === "connecting" ? "bg-amber-400" : "bg-white/25"
                 }`}
               />
               <span>{meta}</span>
-              <span className="text-zinc-300">·</span>
+              <span className="text-white/20">·</span>
               <span>հայերեն</span>
             </div>
           </div>
         </div>
         <div className="flex shrink-0 gap-2">
-          {status === "text" || status === "error" || (status === "idle" && visibleTurns.length > 0) ? (
-            <button className="btn h-9 px-3.5" type="button" onClick={() => void connectVoice()}>
-              Սկսել ձայնով
-            </button>
-          ) : null}
-          <button className="btn-secondary h-9 px-3.5" type="button" onClick={endInterview}>
+          <button
+            className="inline-flex h-9 items-center rounded-full border border-white/12 bg-white/[0.03] px-3.5 text-sm font-medium text-cloud hover:bg-white/6"
+            type="button"
+            onClick={endInterview}
+            disabled={showMicGate}
+          >
             Ավարտել
           </button>
         </div>
       </header>
 
-      {error ? (
-        <p className="mt-3 shrink-0 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+      {error && !showMicGate ? (
+        <p className="relative mt-3 shrink-0 rounded-xl border border-red-400/25 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+          {error}
+        </p>
       ) : null}
 
-      <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white">
+      <div className="relative mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.6rem] border border-white/10 bg-ink-2/80">
         {status !== "text" ? (
           <VoiceOrb
             mode={voiceMode}
@@ -687,56 +774,47 @@ export function InterviewClient({
             onStart={status === "idle" || status === "error" ? () => void connectVoice() : undefined}
           />
         ) : null}
-        <div ref={scrollerRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-4 sm:px-5">
-          {showMicPrompt ? (
-            <div className="flex min-h-[28vh] items-center justify-center">
-              <MicPrompt
-                firstName={firstName}
-                denied={micDenied}
-                connecting={status === "connecting"}
-                onEnable={() => void connectVoice()}
-                onTextOnly={continueWithText}
-              />
-            </div>
-          ) : (
-            visibleTurns.map((turn, index) => {
-              const isUser = turn.role === "user";
-              const isLiveAssistant = !isUser && aiSpeaking && index === visibleTurns.length - 1;
-              return (
-                <div key={`${turn.role}-${index}`} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
-                  <div className={`max-w-[85%] ${isUser ? "items-end" : "items-start"} flex flex-col gap-1`}>
-                    <span className="px-1 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-                      {isUser ? firstName : "Հարցազրուցավար"}
-                    </span>
-                    <div
-                      className={`rounded-2xl px-3.5 py-2.5 text-[15px] leading-6 ${
-                        isUser
-                          ? "rounded-br-md bg-zinc-900 text-white"
-                          : isLiveAssistant
-                            ? "rounded-bl-md bg-gradient-to-br from-sky-50 to-violet-50 text-zinc-900 ring-1 ring-indigo-200/80"
-                            : "rounded-bl-md bg-zinc-100 text-zinc-900"
-                      }`}
-                    >
-                      {turn.content}
-                      {isLiveAssistant ? (
-                        <span className="mt-2 flex items-center gap-2 text-xs font-medium text-indigo-500">
-                          <SpeakingDots />
-                          խոսում է
-                        </span>
-                      ) : null}
-                    </div>
+        <div
+          ref={scrollerRef}
+          className={`min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-4 sm:px-5 ${
+            status !== "text" ? "pt-[268px] sm:pt-[300px]" : "pt-4"
+          }`}
+        >
+          {visibleTurns.map((turn, index) => {
+            const isUser = turn.role === "user";
+            const isLiveAssistant = !isUser && aiSpeaking && index === visibleTurns.length - 1;
+            return (
+              <div key={`${turn.role}-${index}`} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+                <div className={`max-w-[85%] ${isUser ? "items-end" : "items-start"} flex flex-col gap-1`}>
+                  <span className="px-1 text-[11px] font-medium uppercase tracking-wide text-mist">
+                    {isUser ? firstName : "Հարցազրուցավար"}
+                  </span>
+                  <div
+                    className={`rounded-2xl px-3.5 py-2.5 text-[15px] leading-6 ${
+                      isUser
+                        ? "rounded-br-md bg-brand text-white"
+                        : isLiveAssistant
+                          ? "rounded-bl-md border border-brand/35 bg-brand/10 text-cloud"
+                          : "rounded-bl-md border border-white/10 bg-ink-3 text-cloud"
+                    }`}
+                  >
+                    {turn.content}
+                    {isLiveAssistant ? (
+                      <span className="mt-2 flex items-center gap-2 text-xs font-medium text-brand">
+                        <SpeakingDots />
+                        խոսում է
+                      </span>
+                    ) : null}
                   </div>
                 </div>
-              );
-            })
-          )}
+              </div>
+            );
+          })}
           {showAiLiveDots ? (
             <div className="flex justify-start">
               <div className="flex flex-col gap-1">
-                <span className="px-1 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
-                  Հարցազրուցավար
-                </span>
-                <div className="rounded-2xl rounded-bl-md bg-gradient-to-br from-sky-50 to-violet-50 px-3.5 py-3 ring-1 ring-indigo-200/80">
+                <span className="px-1 text-[11px] font-medium uppercase tracking-wide text-mist">Հարցազրուցավար</span>
+                <div className="rounded-2xl rounded-bl-md border border-brand/35 bg-brand/10 px-3.5 py-3">
                   <SpeakingDots />
                 </div>
               </div>
@@ -746,22 +824,38 @@ export function InterviewClient({
       </div>
 
       <form
-        className="mt-3 flex shrink-0 items-end gap-2"
+        className="relative mt-3 flex shrink-0 items-end gap-2"
         onSubmit={(event) => {
           event.preventDefault();
           void sendText();
         }}
       >
         <input
-          className="min-h-11 flex-1 rounded-2xl border border-zinc-200 bg-white px-4 py-2.5 text-[15px] outline-none focus:border-zinc-400"
+          className="min-h-11 flex-1 rounded-full border border-white/12 bg-ink-2 px-4 py-2.5 text-[15px] text-cloud outline-none placeholder:text-mist/70 focus:border-brand/50 disabled:opacity-50"
           value={textInput}
           onChange={(event) => setTextInput(event.target.value)}
           placeholder="Գրեք այստեղ, եթե ձայնը հասանելի չէ"
+          disabled={showMicGate}
         />
-        <button className="btn h-11 px-4" type="submit">
+        <button
+          className="inline-flex h-11 items-center rounded-full bg-brand px-4 text-sm font-medium text-white hover:bg-[#3b9bff] disabled:opacity-60"
+          type="submit"
+          disabled={showMicGate}
+        >
           Ուղարկել
         </button>
       </form>
+
+      {showMicGate ? (
+        <MicPermissionModal
+          firstName={firstName}
+          connecting={status === "connecting"}
+          denied={micDenied}
+          unavailable={micUnavailable}
+          sessionError={status === "error" ? error : ""}
+          onEnable={() => void connectVoice()}
+        />
+      ) : null}
     </div>
   );
 }

@@ -32,10 +32,10 @@ export default async function PublicInterviewPage({
 
   if (finished) {
     return (
-      <main className="mx-auto max-w-xl px-6 py-16">
+      <main className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-6 py-16">
         <BrandLogo size={72} className="mb-6" />
-        <h1 className="text-2xl font-semibold">This interview is complete</h1>
-        <p className="mt-3 text-sm text-zinc-600">Thank you for your time.</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-cloud">This interview is complete</h1>
+        <p className="mt-3 text-sm leading-7 text-mist">Thank you for your time.</p>
       </main>
     );
   }

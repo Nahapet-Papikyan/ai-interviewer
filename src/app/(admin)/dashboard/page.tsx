@@ -14,6 +14,7 @@ export default async function DashboardPage() {
         company: true,
         contact: true,
         processes: { include: { opportunity: true } },
+        _count: { select: { messages: true } },
       },
       orderBy: { createdAt: "desc" },
       take: 8,
@@ -67,7 +68,9 @@ export default async function DashboardPage() {
                 <th className="px-4 py-2 font-medium">Company</th>
                 <th className="px-4 py-2 font-medium">Contact</th>
                 <th className="px-4 py-2 font-medium">Status</th>
+                <th className="px-4 py-2 font-medium">Turns</th>
                 <th className="px-4 py-2 font-medium">Best score</th>
+                <th className="px-4 py-2 font-medium"></th>
               </tr>
             </thead>
             <tbody>
@@ -86,7 +89,13 @@ export default async function DashboardPage() {
                       {interview.contact.firstName} · {interview.contact.role}
                     </td>
                     <td className="px-4 py-2">{interview.status}</td>
+                    <td className="px-4 py-2">{interview._count.messages}</td>
                     <td className="px-4 py-2">{best ? Math.round(best) : "—"}</td>
+                    <td className="px-4 py-2 text-right">
+                      <Link href={`/interviews/${interview.id}#transcript`} className="text-sm font-medium hover:underline">
+                        {interview._count.messages ? "Read chat" : "Open"}
+                      </Link>
+                    </td>
                   </tr>
                 );
               })}
