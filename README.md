@@ -12,11 +12,17 @@ Internal customer-discovery interviews for Armenian companies: unique `/i/{token
 
 Admin: http://localhost:3000/login
 
-## Deploy (GitHub Actions → Vercel)
+## Deploy (GitHub → Vercel)
 
-Autodeploy does **not** use Vercel’s Git integration. That path rejects commits whose author email is not a verified address on the connected GitHub account (this repo’s commits currently use `nahapetpapikyanl@gmail.com`). `vercel.json` keeps native Git deploys off so that modal can be ignored.
+The first Production deploy worked because Vercel imported the repo as your account. Later deploys are blocked when GitHub cannot match the **commit author email** to the `Nahapet-Papikyan` user. That is the error: *GitHub could not associate the committer with a GitHub user.*
 
-Every push to `main` runs **Deploy production**. Pull requests run **Deploy preview**. You can also run either workflow by hand from the Actions tab.
+Use this commit email (GitHub’s private noreply for this account):
+
+`64918606+Nahapet-Papikyan@users.noreply.github.com`
+
+Do not paste a GitHub tree URL into Vercel’s Create Deployment field. Enter `main`, or wait for the push to deploy.
+
+GitHub Actions **Deploy production** still runs on push to `main` and reads Vercel secrets from the **Prod** environment.
 
 1. Import the repo in Vercel: [vercel.com/new](https://vercel.com/new) → **Nahapet-Papikyan/ai-interviewer**.
 2. In Vercel → Account → [Authentication](https://vercel.com/account/authentication), connect the **Nahapet-Papikyan** GitHub account.
@@ -31,15 +37,12 @@ Every push to `main` runs **Deploy production**. Pull requests run **Deploy prev
    - `APP_URL` (your `https://….vercel.app` URL, or a custom domain)
    - `INGEST_API_KEY` (optional; required for `/api/invitations`)
 4. Create a Vercel token: [vercel.com/account/tokens](https://vercel.com/account/tokens).
-5. Copy **Project ID** and **Org/Team ID** from Vercel → Project Settings → General (they also appear in `.vercel/project.json` after `npx vercel link`).
+5. Copy **Project ID** and **Team ID** from Vercel → Project Settings → General (they also appear in `.vercel/project.json` after `npx vercel link`).
 6. In GitHub → **Settings → Environments → Prod**, add:
    - `VERCEL_TOKEN`
    - `VERCEL_ORG_ID`
-   - `VERCEL_PROJECT_ID`  
-   The production workflow reads these from the **Prod** environment, not from repository secrets.
-7. Open GitHub → **Actions** and confirm **Deploy production** is green. If it fails on missing secrets, step 6 is incomplete.
-
-Optional, if you want Vercel’s own Git deploys later: add the email from `git log -1 --format='%ae'` to [GitHub emails](https://github.com/settings/emails) and [Vercel emails](https://vercel.com/account/settings), then remove `"git": { "deploymentEnabled": false }` from `vercel.json`. Until then, ignore the Vercel “Fix Git Configuration” prompt.
+   - `VERCEL_PROJECT_ID`
+7. Open GitHub → **Actions** and confirm **Deploy production** is green.
 
 After the first deploy, point `APP_URL` at the live URL and apply the schema once:
 
