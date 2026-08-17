@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { OpenAIRealtimeWebRTC, RealtimeAgent, RealtimeSession, tool } from "@openai/agents/realtime";
 import { z } from "zod";
+import { BrandLogo } from "@/components/brand/Logo";
+import { MicPrompt } from "@/components/interview/MicPrompt";
 import { VoiceOrb, type VoiceLevels } from "@/components/interview/VoiceOrb";
 
 type Turn = { role: "user" | "assistant" | "system" | "tool"; content: string };
@@ -14,6 +16,7 @@ type Props = {
   role: string;
   alreadyConsented: boolean;
   existingTurns: Turn[];
+  language?: string;
 };
 
 function extractTurns(history: unknown[]): Turn[] {
@@ -109,6 +112,7 @@ export function InterviewClient({
   role,
   alreadyConsented,
   existingTurns,
+  language = "hy",
 }: Props) {
   const [consented, setConsented] = useState(alreadyConsented);
   const [status, setStatus] = useState<"idle" | "connecting" | "live" | "text" | "ended" | "error">("idle");
@@ -124,6 +128,7 @@ export function InterviewClient({
   const audioCleanupRef = useRef<(() => void) | null>(null);
   const persistTimerRef = useRef<number | null>(null);
   const latestTurnsRef = useRef<Turn[]>(existingTurns);
+  const connectingRef = useRef(false);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const userMutedRef = useRef(false);
   const aiSpeakingRef = useRef(false);
@@ -132,6 +137,9 @@ export function InterviewClient({
   const introPendingRef = useRef(false);
   const introFallbackRef = useRef<number | null>(null);
   const [aiSpeaking, setAiSpeaking] = useState(false);
+  const [userMuted, setUserMuted] = useState(false);
+  const [listeningOpen, setListeningOpen] = useState(false);
+  const [micDenied, setMicDenied] = useState(false);
   mutedRef.current = muted || aiSpeaking || !listeningOpenRef.current;
 
   function applyMicGate() {
@@ -182,6 +190,7 @@ export function InterviewClient({
     if (listeningOpenRef.current) return;
     clearInputAudio();
     listeningOpenRef.current = true;
+    setListeningOpen(true);
     setVadAutoResponse(true);
     applyMicGate();
   }
@@ -215,7 +224,14 @@ export function InterviewClient({
   function toggleUserMic() {
     if (aiSpeakingRef.current || !listeningOpenRef.current) return;
     userMutedRef.current = !userMutedRef.current;
+    setUserMuted(userMutedRef.current);
     applyMicGate();
+  }
+
+  function continueWithText() {
+    setMicDenied(false);
+    setStatus("text");
+    setError("");
   }
 
   const tools = useMemo(
@@ -294,25 +310,18 @@ export function InterviewClient({
   }
 
   async function connectVoice() {
+    if (connectingRef.current) return;
+    connectingRef.current = true;
     setStatus("connecting");
     setError("");
+    setMicDenied(false);
+    setUserMuted(false);
+    setListeningOpen(false);
+    userMutedRef.current = false;
+    listeningOpenRef.current = false;
     try {
-      const res = await fetch("/api/realtime/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ interviewToken: token }),
-      });
-      if (!res.ok) {
-        throw new Error("Չհաջողվեց սկսել ձայնային կապը");
-      }
-      const data = (await res.json()) as {
-        clientSecret: string;
-        model: string;
-        instructions?: string;
-      };
-
       audioCleanupRef.current?.();
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
+      const mediaStreamPromise = navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
@@ -320,6 +329,13 @@ export function InterviewClient({
           channelCount: 1,
         },
       });
+      const tokenPromise = fetch("/api/realtime/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ interviewToken: token }),
+      });
+
+      const mediaStream = await mediaStreamPromise;
       mediaStream.getAudioTracks().forEach((track) => {
         track.enabled = false;
       });
@@ -327,8 +343,22 @@ export function InterviewClient({
       listeningOpenRef.current = false;
       introPendingRef.current = reconnects.current === 0;
       setMuted(true);
+
       const audioCtx = new AudioContext();
       await audioCtx.resume();
+
+      const res = await tokenPromise;
+      if (!res.ok) {
+        mediaStream.getTracks().forEach((track) => track.stop());
+        mediaStreamRef.current = null;
+        void audioCtx.close();
+        throw new Error("Չհաջողվեց սկսել ձայնային կապը");
+      }
+      const data = (await res.json()) as {
+        clientSecret: string;
+        model: string;
+        instructions?: string;
+      };
 
       const micAnalyser = audioCtx.createAnalyser();
       micAnalyser.fftSize = 2048;
@@ -431,11 +461,18 @@ export function InterviewClient({
       clearInputAudio();
       if (reconnects.current === 0) {
         beginAiSpeech();
+        const speakIn = language === "en" ? "English" : "հայերեն";
+        const greet = language === "en"
+          ? firstName
+            ? `Start with "Hello, ${firstName}".`
+            : "Greet them without using a name."
+          : firstName
+            ? `Start with "Բարև, ${firstName}".`
+            : "Greet them without using a name.";
         session.transport.sendEvent({
           type: "response.create",
           response: {
-            instructions:
-              "The respondent just enabled the microphone and is listening. Speak first now, in հայերեն. Briefly introduce yourself as an AI interviewer: greet them by first name, thank them, say this is not a sales call, you want to understand recurring time-consuming processes, it usually takes 15–20 minutes, they should not share passwords or personal customer data, then ask if you may begin. A few short sentences only. Do not wait for them to speak.",
+            instructions: `The respondent just enabled the microphone and is listening. Speak first now, in ${speakIn}. ${greet} Use the given name "${firstName}" if provided — never the word "անուն" or "name". Briefly introduce yourself as an AI interviewer, thank them, say this is not a sales call, you want to understand recurring time-consuming processes, it usually takes 15–20 minutes, they should not share passwords or personal customer data, then ask if you may begin. A few short sentences only. Do not wait for them to speak.`,
           },
         });
         introFallbackRef.current = window.setTimeout(() => {
@@ -467,6 +504,7 @@ export function InterviewClient({
         if (introFallbackRef.current) window.clearTimeout(introFallbackRef.current);
         listeningOpenRef.current = false;
         introPendingRef.current = false;
+        setListeningOpen(false);
         mediaStream.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
         void audioCtx.close();
@@ -474,8 +512,24 @@ export function InterviewClient({
 
       setStatus("live");
     } catch (err) {
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+      const name = err instanceof DOMException ? err.name : "";
+      if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+        setMicDenied(true);
+        setStatus("idle");
+        setError("");
+        return;
+      }
+      if (name === "NotFoundError") {
+        setError("Խոսափող չի գտնվել այս սարքում։ Կարող եք շարունակել տեքստով։");
+        setStatus("text");
+        return;
+      }
       setError(err instanceof Error ? err.message : "Կապը չհաջողվեց");
       setStatus("error");
+    } finally {
+      connectingRef.current = false;
     }
   }
 
@@ -486,6 +540,10 @@ export function InterviewClient({
       return;
     }
     reconnects.current += 1;
+    sessionRef.current?.close();
+    sessionRef.current = null;
+    audioCleanupRef.current?.();
+    audioCleanupRef.current = null;
     await connectVoice();
   }
 
@@ -506,6 +564,7 @@ export function InterviewClient({
     }
     await sessionAction(token, "complete", { turns: historyTurns });
     sessionRef.current?.close();
+    sessionRef.current = null;
     audioCleanupRef.current?.();
     audioCleanupRef.current = null;
     setStatus("ended");
@@ -540,6 +599,7 @@ export function InterviewClient({
   if (!consented) {
     return (
       <div className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-6 py-16">
+        <BrandLogo size={72} priority className="mb-6" />
         <p className="text-sm text-zinc-500">{companyName}</p>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Բարև, {firstName}</h1>
         <div className="mt-6 space-y-3 text-[15px] leading-7 text-zinc-700">
@@ -564,6 +624,7 @@ export function InterviewClient({
   if (status === "ended") {
     return (
       <div className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-6 py-16">
+        <BrandLogo size={72} className="mb-6" />
         <h1 className="text-2xl font-semibold tracking-tight">Շնորհակալություն, {firstName}</h1>
         <p className="mt-3 text-[15px] leading-7 text-zinc-600">
           Հարցազրույցն ավարտված է։ Կարող եք փակել այս էջը։
@@ -574,26 +635,33 @@ export function InterviewClient({
 
   const meta = statusCopy(status);
   const visibleTurns = turns.filter((turn) => turn.role === "user" || turn.role === "assistant");
+  const lastTurn = visibleTurns[visibleTurns.length - 1];
+  const showAiLiveDots = status === "live" && aiSpeaking && lastTurn?.role !== "assistant";
+  const voiceMode = status === "connecting" ? "connecting" : status === "live" ? "live" : "idle";
+  const showMicPrompt = visibleTurns.length === 0 && status !== "live";
 
   return (
     <div className="mx-auto flex h-dvh max-w-2xl flex-col overflow-hidden px-4 py-5 sm:px-6">
       <header className="flex shrink-0 items-start justify-between gap-4 border-b border-zinc-200 pb-4">
-        <div>
-          <h1 className="text-lg font-semibold tracking-tight">{companyName}</h1>
-          <div className="mt-1 flex items-center gap-2 text-sm text-zinc-500">
-            <span
-              className={`inline-block h-2 w-2 rounded-full ${
-                status === "live" ? "bg-emerald-500" : status === "connecting" ? "bg-amber-400" : "bg-zinc-300"
-              }`}
-            />
-            <span>{meta}</span>
-            <span className="text-zinc-300">·</span>
-            <span>հայերեն</span>
+        <div className="flex min-w-0 items-start gap-3">
+          <BrandLogo size={40} priority />
+          <div className="min-w-0">
+            <h1 className="truncate text-lg font-semibold tracking-tight">{companyName}</h1>
+            <div className="mt-1 flex items-center gap-2 text-sm text-zinc-500">
+              <span
+                className={`inline-block h-2 w-2 rounded-full ${
+                  status === "live" ? "bg-emerald-500" : status === "connecting" ? "bg-amber-400" : "bg-zinc-300"
+                }`}
+              />
+              <span>{meta}</span>
+              <span className="text-zinc-300">·</span>
+              <span>հայերեն</span>
+            </div>
           </div>
         </div>
         <div className="flex shrink-0 gap-2">
-          {status !== "live" && status !== "connecting" ? (
-            <button className="btn h-9 px-3.5" type="button" onClick={connectVoice}>
+          {status === "text" || status === "error" || (status === "idle" && visibleTurns.length > 0) ? (
+            <button className="btn h-9 px-3.5" type="button" onClick={() => void connectVoice()}>
               Սկսել ձայնով
             </button>
           ) : null}
@@ -607,29 +675,33 @@ export function InterviewClient({
         <p className="mt-3 shrink-0 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
       ) : null}
 
-      <div className="relative mt-4 min-h-0 flex-1 overflow-hidden rounded-2xl border border-zinc-200 bg-white">
-        <VoiceOrb
-          mode={status === "connecting" ? "connecting" : status === "live" ? "live" : "idle"}
-          muted={muted}
-          aiSpeaking={aiSpeaking}
-          levelsRef={levelsRef}
-          onToggleMic={status === "live" ? toggleUserMic : undefined}
-        />
-        <div ref={scrollerRef} className="h-full space-y-3 overflow-y-auto px-4 pb-4 pt-[132px] sm:px-5">
-          {visibleTurns.length === 0 ? (
-            <div className="flex min-h-[40vh] items-center justify-center px-4 text-center">
-              <div className="max-w-sm">
-                <p className="text-base font-medium text-zinc-900">Պատրաստ ենք սկսել, {firstName}</p>
-                <p className="mt-2 text-sm leading-6 text-zinc-500">
-                  {status === "live"
-                    ? "Խոսեք ազատ։ Հարցազրույցը կընթանա հայերեն, եթե դուք այլ լեզու չընտրեք։"
-                    : "Սեղմեք «Սկսել ձայնով»՝ զրույցը սկսելու համար։ Եթե խոսափողը հասանելի չէ, կարող եք գրել ներքևում։"}
-                </p>
-              </div>
+      <div className="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-zinc-200 bg-white">
+        {status !== "text" ? (
+          <VoiceOrb
+            mode={voiceMode}
+            userMuted={userMuted}
+            aiSpeaking={aiSpeaking}
+            listeningOpen={listeningOpen}
+            levelsRef={levelsRef}
+            onToggleMic={status === "live" ? toggleUserMic : undefined}
+            onStart={status === "idle" || status === "error" ? () => void connectVoice() : undefined}
+          />
+        ) : null}
+        <div ref={scrollerRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 pb-4 sm:px-5">
+          {showMicPrompt ? (
+            <div className="flex min-h-[28vh] items-center justify-center">
+              <MicPrompt
+                firstName={firstName}
+                denied={micDenied}
+                connecting={status === "connecting"}
+                onEnable={() => void connectVoice()}
+                onTextOnly={continueWithText}
+              />
             </div>
           ) : (
             visibleTurns.map((turn, index) => {
               const isUser = turn.role === "user";
+              const isLiveAssistant = !isUser && aiSpeaking && index === visibleTurns.length - 1;
               return (
                 <div key={`${turn.role}-${index}`} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
                   <div className={`max-w-[85%] ${isUser ? "items-end" : "items-start"} flex flex-col gap-1`}>
@@ -638,18 +710,37 @@ export function InterviewClient({
                     </span>
                     <div
                       className={`rounded-2xl px-3.5 py-2.5 text-[15px] leading-6 ${
-                        isUser ? "rounded-br-md bg-zinc-900 text-white" : "rounded-bl-md bg-zinc-100 text-zinc-900"
+                        isUser
+                          ? "rounded-br-md bg-zinc-900 text-white"
+                          : isLiveAssistant
+                            ? "rounded-bl-md bg-gradient-to-br from-sky-50 to-violet-50 text-zinc-900 ring-1 ring-indigo-200/80"
+                            : "rounded-bl-md bg-zinc-100 text-zinc-900"
                       }`}
                     >
                       {turn.content}
+                      {isLiveAssistant ? (
+                        <span className="mt-2 flex items-center gap-2 text-xs font-medium text-indigo-500">
+                          <SpeakingDots />
+                          խոսում է
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                 </div>
               );
             })
           )}
-          {status === "connecting" ? (
-            <p className="text-center text-sm text-zinc-400">Միանում է խոսափողին…</p>
+          {showAiLiveDots ? (
+            <div className="flex justify-start">
+              <div className="flex flex-col gap-1">
+                <span className="px-1 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+                  Հարցազրուցավար
+                </span>
+                <div className="rounded-2xl rounded-bl-md bg-gradient-to-br from-sky-50 to-violet-50 px-3.5 py-3 ring-1 ring-indigo-200/80">
+                  <SpeakingDots />
+                </div>
+              </div>
+            </div>
           ) : null}
         </div>
       </div>
@@ -672,5 +763,15 @@ export function InterviewClient({
         </button>
       </form>
     </div>
+  );
+}
+
+function SpeakingDots() {
+  return (
+    <span className="inline-flex items-center gap-1" aria-hidden>
+      <span className="voice-dot" />
+      <span className="voice-dot" />
+      <span className="voice-dot" />
+    </span>
   );
 }

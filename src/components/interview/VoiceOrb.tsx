@@ -1,149 +1,262 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type MutableRefObject } from "react";
 
 export type VoiceLevels = { user: number; ai: number };
 export type VoiceSessionMode = "idle" | "connecting" | "live";
 
+type Speaker = "none" | "user" | "ai";
+
 type Props = {
   mode: VoiceSessionMode;
-  muted: boolean;
+  userMuted: boolean;
   aiSpeaking?: boolean;
-  levelsRef: React.MutableRefObject<VoiceLevels>;
+  listeningOpen?: boolean;
+  levelsRef: MutableRefObject<VoiceLevels>;
   onToggleMic?: () => void;
+  onStart?: () => void;
 };
-
-const BAR_COUNT = 7;
 
 function caption(
   mode: VoiceSessionMode,
-  muted: boolean,
-  speaker: "none" | "user" | "ai",
+  userMuted: boolean,
+  speaker: Speaker,
   aiSpeaking: boolean,
+  listeningOpen: boolean,
 ) {
-  if (mode === "connecting") return "Միանում է…";
-  if (mode !== "live") return "Սպասում է ձայնին";
+  if (mode === "connecting") return "Թույլատրեք խոսափողը զննարկչում";
+  if (mode !== "live") return "Սեղմեք՝ խոսափողը միացնելու համար";
   if (aiSpeaking || speaker === "ai") return "Հարցազրուցավարը խոսում է";
-  if (muted) return "Խոսափողն անջատված է";
+  if (userMuted || !listeningOpen) return "Սեղմեք՝ խոսափողը միացնելու համար";
   if (speaker === "user") return "Դուք եք խոսում";
-  return "Լսում է";
+  return "Լսում է ձեզ";
 }
 
-export function VoiceOrb({ mode, muted, aiSpeaking = false, levelsRef, onToggleMic }: Props) {
-  const userBarsRef = useRef<HTMLSpanElement[]>([]);
-  const aiBarsRef = useRef<HTMLSpanElement[]>([]);
-  const userMicRef = useRef<HTMLDivElement>(null);
-  const aiMicRef = useRef<HTMLDivElement>(null);
+export function VoiceOrb({
+  mode,
+  userMuted,
+  aiSpeaking = false,
+  listeningOpen = false,
+  levelsRef,
+  onToggleMic,
+  onStart,
+}: Props) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const captionRef = useRef<HTMLParagraphElement>(null);
   const modeRef = useRef(mode);
-  const mutedRef = useRef(muted);
+  const mutedRef = useRef(userMuted);
   const aiSpeakingRef = useRef(aiSpeaking);
+  const listeningRef = useRef(listeningOpen);
 
   modeRef.current = mode;
-  mutedRef.current = muted;
+  mutedRef.current = userMuted;
   aiSpeakingRef.current = aiSpeaking;
+  listeningRef.current = listeningOpen;
+
+  const clickable = mode === "idle" ? Boolean(onStart) : Boolean(onToggleMic) && listeningOpen && !aiSpeaking;
+  const showEnableHint = mode === "idle" || (mode === "live" && (userMuted || !listeningOpen) && !aiSpeaking);
 
   useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
     let raf = 0;
+    let time = 0;
     let smoothUser = 0;
     let smoothAi = 0;
     let lastCaption = "";
 
-    const tick = () => {
-      const user = mutedRef.current ? 0 : levelsRef.current.user;
-      const ai = levelsRef.current.ai;
-      smoothUser += (user - smoothUser) * 0.22;
-      smoothAi += (ai - smoothAi) * 0.26;
+    const resize = () => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const size = canvas.clientWidth;
+      canvas.width = Math.max(1, Math.floor(size * dpr));
+      canvas.height = Math.max(1, Math.floor(size * dpr));
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(canvas);
 
-      const speaker: "none" | "user" | "ai" =
+    const drawBlob = (
+      cx: number,
+      cy: number,
+      radius: number,
+      energy: number,
+      phase: number,
+      inner: string,
+      mid: string,
+      outer: string,
+      alpha: number,
+    ) => {
+      const points = 56;
+      ctx.beginPath();
+      for (let i = 0; i <= points; i += 1) {
+        const a = (i / points) * Math.PI * 2;
+        const wobble =
+          Math.sin(a * 3 + time * 1.15 + phase) * 0.11 +
+          Math.sin(a * 5 - time * 0.85 + phase * 0.4) * 0.07 +
+          Math.cos(a * 2 + time * 0.55) * 0.08;
+        const r = radius * (1 + wobble * (0.42 + energy * 1.55) + energy * 0.16);
+        const x = cx + Math.cos(a) * r;
+        const y = cy + Math.sin(a) * r;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      const gradient = ctx.createRadialGradient(
+        cx - radius * 0.22,
+        cy - radius * 0.28,
+        radius * 0.08,
+        cx,
+        cy,
+        radius * 1.2,
+      );
+      gradient.addColorStop(0, inner);
+      gradient.addColorStop(0.45, mid);
+      gradient.addColorStop(1, outer);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = gradient;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    };
+
+    const tick = () => {
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      const user = mutedRef.current || !listeningRef.current ? 0 : levelsRef.current.user;
+      const ai = levelsRef.current.ai;
+      smoothUser += (user - smoothUser) * 0.2;
+      smoothAi += (ai - smoothAi) * 0.24;
+      time += 0.016;
+
+      const speaker: Speaker =
         modeRef.current !== "live"
           ? "none"
           : aiSpeakingRef.current || smoothAi > 0.05
             ? "ai"
-            : !mutedRef.current && smoothUser > 0.06
+            : listeningRef.current && !mutedRef.current && smoothUser > 0.06
               ? "user"
               : "none";
 
-      const nextCaption = caption(modeRef.current, mutedRef.current, speaker, aiSpeakingRef.current);
+      const nextCaption = caption(
+        modeRef.current,
+        mutedRef.current,
+        speaker,
+        aiSpeakingRef.current,
+        listeningRef.current,
+      );
       if (captionRef.current && nextCaption !== lastCaption) {
         captionRef.current.textContent = nextCaption;
         lastCaption = nextCaption;
       }
 
-      const t = performance.now() / 220;
       const connecting = modeRef.current === "connecting";
-      const userActive = speaker === "user";
-      const aiActive = speaker === "ai";
-      const userEnergy = connecting ? 0.18 + Math.sin(t) * 0.08 : Math.min(1, 0.12 + smoothUser * 1.8);
-      const aiEnergy = connecting ? 0.18 + Math.cos(t) * 0.08 : Math.min(1, 0.12 + smoothAi * 1.8);
+      const idle = modeRef.current === "idle";
+      const muted = modeRef.current === "live" && (mutedRef.current || !listeningRef.current) && speaker !== "ai";
+      const energy =
+        connecting || idle
+          ? 0.16 + Math.sin(time * 1.6) * 0.06
+          : speaker === "ai"
+            ? Math.min(1, 0.22 + smoothAi * 1.7)
+            : speaker === "user"
+              ? Math.min(1, 0.2 + smoothUser * 1.6)
+              : 0.1 + Math.sin(time * 1.15) * 0.04;
 
-      if (userMicRef.current) {
-        userMicRef.current.style.transform = `scale(${userActive ? 1.08 + smoothUser * 0.18 : 1})`;
-        userMicRef.current.dataset.active = userActive ? "true" : "false";
-      }
-      if (aiMicRef.current) {
-        aiMicRef.current.style.transform = `scale(${aiActive ? 1.08 + smoothAi * 0.18 : 1})`;
-        aiMicRef.current.dataset.active = aiActive ? "true" : "false";
+      ctx.clearRect(0, 0, width, height);
+      const cx = width / 2;
+      const cy = height / 2;
+      const radius = Math.min(width, height) * (muted ? 0.26 : 0.3);
+
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+
+      if (muted) {
+        drawBlob(cx, cy, radius, energy * 0.4, 0, "#94a3b8", "#64748b", "#33415500", 0.55);
+      } else if (speaker === "user") {
+        drawBlob(cx - 8, cy + 4, radius * 1.02, energy, 0.2, "#7dd3fc", "#0ea5e9", "#0369a100", 0.85);
+        drawBlob(cx + 6, cy - 6, radius * 0.92, energy, 1.4, "#c4b5fd", "#6366f1", "#312e8100", 0.7);
+      } else if (speaker === "ai" || connecting) {
+        drawBlob(cx - 10, cy - 4, radius * 1.04, energy, 0.15, "#67e8f9", "#38bdf8", "#0284c700", 0.8);
+        drawBlob(cx + 8, cy + 2, radius, energy, 1.1, "#a5b4fc", "#6366f1", "#312e8100", 0.85);
+        drawBlob(cx, cy + 8, radius * 0.9, energy, 2.2, "#e9d5ff", "#a855f7", "#6b21a800", 0.75);
+      } else {
+        drawBlob(cx - 6, cy - 2, radius, energy, 0.1, "#7dd3fc", "#38bdf8", "#0369a100", 0.7);
+        drawBlob(cx + 7, cy + 4, radius * 0.94, energy, 1.6, "#c4b5fd", "#818cf8", "#312e8100", 0.72);
+        drawBlob(cx, cy + 6, radius * 0.86, energy, 2.4, "#d8b4fe", "#a855f7", "#6b21a800", 0.55);
       }
 
-      userBarsRef.current.forEach((bar, i) => {
-        if (!bar) return;
-        const wave = 0.35 + Math.abs(Math.sin(t + i * 0.55)) * userEnergy;
-        bar.style.height = `${12 + wave * 28}px`;
-        bar.style.opacity = userActive || connecting ? "1" : "0.35";
-      });
-      aiBarsRef.current.forEach((bar, i) => {
-        if (!bar) return;
-        const wave = 0.35 + Math.abs(Math.sin(t + i * 0.55 + 1.2)) * aiEnergy;
-        bar.style.height = `${12 + wave * 28}px`;
-        bar.style.opacity = aiActive || connecting ? "1" : "0.35";
-      });
+      ctx.restore();
+
+      const sheen = ctx.createRadialGradient(cx - radius * 0.25, cy - radius * 0.3, 2, cx, cy, radius);
+      sheen.addColorStop(0, "rgba(255,255,255,0.55)");
+      sheen.addColorStop(0.35, "rgba(255,255,255,0.08)");
+      sheen.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = sheen;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius * 0.95, 0, Math.PI * 2);
+      ctx.fill();
 
       raf = requestAnimationFrame(tick);
     };
 
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+    };
   }, [levelsRef]);
 
+  function handleClick() {
+    if (mode === "idle") {
+      onStart?.();
+      return;
+    }
+    onToggleMic?.();
+  }
+
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0 z-10 border-b border-white/50 bg-white/55 px-4 py-3 backdrop-blur-xl">
-      <div className="flex items-center justify-center gap-4">
-        <MicBadge
-          ref={userMicRef}
-          label="Դուք"
-          muted={muted}
-          tone="user"
-          onClick={onToggleMic}
-        />
-        <div className="flex h-12 items-end gap-1">
-          {Array.from({ length: BAR_COUNT }, (_, i) => (
-            <span
-              key={`u-${i}`}
-              ref={(el) => {
-                if (el) userBarsRef.current[i] = el;
-              }}
-              className="w-1 rounded-full bg-sky-500"
-              style={{ height: 12 }}
-            />
-          ))}
-        </div>
-        <div className="flex h-12 items-end gap-1">
-          {Array.from({ length: BAR_COUNT }, (_, i) => (
-            <span
-              key={`a-${i}`}
-              ref={(el) => {
-                if (el) aiBarsRef.current[i] = el;
-              }}
-              className="w-1 rounded-full bg-indigo-500"
-              style={{ height: 12 }}
-            />
-          ))}
-        </div>
-        <MicBadge ref={aiMicRef} label="AI" muted={false} tone="ai" />
-      </div>
-      <p ref={captionRef} className="mt-2 text-center text-xs font-medium text-zinc-700">
-        {caption(mode, muted, "none", aiSpeaking)}
+    <div className="flex shrink-0 flex-col items-center px-4 pb-2 pt-4">
+      <button
+        type="button"
+        disabled={!clickable}
+        onClick={handleClick}
+        aria-label={
+          mode === "idle"
+            ? "Միացնել խոսափողը"
+            : userMuted || !listeningOpen
+              ? "Միացնել խոսափողը"
+              : "Անջատել խոսափողը"
+        }
+        title={
+          showEnableHint
+            ? "Սեղմեք՝ խոսափողը միացնելու համար"
+            : clickable
+              ? "Սեղմեք՝ խոսափողն անջատելու համար"
+              : undefined
+        }
+        className={`relative flex h-[148px] w-[148px] items-center justify-center sm:h-[168px] sm:w-[168px] ${
+          clickable ? "cursor-pointer" : "cursor-default"
+        }`}
+      >
+        {showEnableHint ? (
+          <>
+            <span className="mic-ring" />
+            <span className="mic-ring mic-ring-delay" />
+          </>
+        ) : null}
+        <canvas ref={canvasRef} className="h-full w-full" />
+        {showEnableHint ? (
+          <span className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white/80 text-zinc-800 shadow-sm backdrop-blur-sm">
+              <MicIcon off={mode === "live" && userMuted} />
+            </span>
+          </span>
+        ) : null}
+      </button>
+      <p ref={captionRef} className="mt-1 text-center text-xs font-medium text-zinc-600">
+        {caption(mode, userMuted, "none", aiSpeaking, listeningOpen)}
       </p>
     </div>
   );
@@ -151,7 +264,7 @@ export function VoiceOrb({ mode, muted, aiSpeaking = false, levelsRef, onToggleM
 
 function MicIcon({ off }: { off?: boolean }) {
   return (
-    <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth="1.8">
+    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.8">
       {off ? (
         <>
           <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.3V12a3 3 0 0 1-.2 1.1" />
@@ -166,48 +279,5 @@ function MicIcon({ off }: { off?: boolean }) {
         </>
       )}
     </svg>
-  );
-}
-
-function MicBadge({
-  ref,
-  label,
-  muted,
-  tone,
-  onClick,
-}: {
-  ref: React.Ref<HTMLDivElement>;
-  label: string;
-  muted: boolean;
-  tone: "user" | "ai";
-  onClick?: () => void;
-}) {
-  const active =
-    tone === "user"
-      ? "data-[active=true]:bg-sky-600 data-[active=true]:text-white data-[active=true]:ring-4 data-[active=true]:ring-sky-300"
-      : "data-[active=true]:bg-indigo-600 data-[active=true]:text-white data-[active=true]:ring-4 data-[active=true]:ring-indigo-300";
-  const mutedStyle = muted && tone === "user" ? "bg-zinc-900 text-white border-zinc-900" : "bg-white text-zinc-800";
-  const clickable = Boolean(onClick);
-
-  return (
-    <div className="flex flex-col items-center gap-1">
-      <button
-        type="button"
-        disabled={!clickable}
-        onClick={onClick}
-        className={`pointer-events-auto ${clickable ? "cursor-pointer" : "cursor-default"}`}
-      >
-        <div
-          ref={ref}
-          data-active="false"
-          className={`flex h-14 w-14 items-center justify-center rounded-full border shadow-sm transition-transform duration-150 ${mutedStyle} ${active} ${
-            clickable ? "hover:scale-105" : ""
-          }`}
-        >
-          <MicIcon off={muted && tone === "user"} />
-        </div>
-      </button>
-      <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">{label}</span>
-    </div>
   );
 }

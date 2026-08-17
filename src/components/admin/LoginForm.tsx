@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { BrandLogo } from "@/components/brand/Logo";
 
 export function LoginForm() {
   const search = useSearchParams();
@@ -28,6 +29,7 @@ export function LoginForm() {
 
   return (
     <main className="mx-auto flex min-h-screen max-w-sm flex-col justify-center px-6">
+      <BrandLogo size={72} priority className="mb-5" />
       <h1 className="text-xl font-semibold">Admin login</h1>
       <p className="mt-2 text-sm text-zinc-500">Internal discovery dashboard. Single shared password for MVP.</p>
       <form onSubmit={onSubmit} className="mt-6 space-y-4">

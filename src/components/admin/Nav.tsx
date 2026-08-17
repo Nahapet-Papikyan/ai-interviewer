@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { BrandMark } from "@/components/brand/Logo";
 
 const LINKS = [
   { href: "/dashboard", label: "Dashboard" },
@@ -22,8 +23,8 @@ export function AdminNav() {
   return (
     <header className="border-b border-zinc-200 bg-white">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-6 px-6 py-3">
-        <Link href="/dashboard" className="text-sm font-semibold tracking-tight">
-          Discovery Engine
+        <Link href="/dashboard" className="shrink-0">
+          <BrandMark size={28} />
         </Link>
         <nav className="flex flex-1 items-center gap-4 text-sm">
           {LINKS.map((link) => {

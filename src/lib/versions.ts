@@ -1,4 +1,4 @@
-export const INTERVIEWER_PROMPT_VERSION = "interviewer-v1";
+export const INTERVIEWER_PROMPT_VERSION = "interviewer-v2";
 export const ANALYZER_PROMPT_VERSION = "analyzer-v1";
 export const ANALYSIS_SCHEMA_VERSION = "analysis-schema-v1";
 
