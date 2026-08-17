@@ -1,12 +1,16 @@
+import { realtimeVoice } from "@/lib/openai/realtime-config";
+
 export async function mintRealtimeClientSecret(input: {
   instructions: string;
   model: string;
+  voice?: string;
 }) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY is not set");
   }
 
+  const voice = input.voice || realtimeVoice();
   const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
     method: "POST",
     headers: {
@@ -18,6 +22,11 @@ export async function mintRealtimeClientSecret(input: {
         type: "realtime",
         model: input.model,
         instructions: input.instructions,
+        audio: {
+          output: {
+            voice,
+          },
+        },
       },
     }),
   });

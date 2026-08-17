@@ -6,6 +6,11 @@ import { z } from "zod";
 import { BrandLogo } from "@/components/brand/Logo";
 import { MicPermissionModal } from "@/components/interview/MicPermissionModal";
 import { VoiceOrb, type VoiceLevels } from "@/components/interview/VoiceOrb";
+import {
+  DEFAULT_REALTIME_VOICE,
+  REALTIME_TRANSCRIBE_LANGUAGE,
+  REALTIME_TRANSCRIBE_PROMPT,
+} from "@/lib/openai/realtime-config";
 
 type Turn = { role: "user" | "assistant" | "system" | "tool"; content: string };
 
@@ -39,6 +44,31 @@ function extractTurns(history: unknown[]): Turn[] {
     if (content) turns.push({ role, content });
   }
   return turns;
+}
+
+function isToolActivityEvent(event: unknown): boolean {
+  if (!event || typeof event !== "object") return false;
+  const rec = event as {
+    type?: string;
+    item?: { type?: string };
+    response?: { output?: Array<{ type?: string }> };
+  };
+  if (
+    rec.type === "response.function_call_arguments.delta" ||
+    rec.type === "response.function_call_arguments.done"
+  ) {
+    return true;
+  }
+  if (
+    (rec.type === "response.output_item.added" || rec.type === "response.output_item.done") &&
+    rec.item?.type === "function_call"
+  ) {
+    return true;
+  }
+  if (rec.type === "response.done") {
+    return rec.response?.output?.some((item) => item.type === "function_call") ?? false;
+  }
+  return false;
 }
 
 function mergeTurns(previous: Turn[], incoming: Turn[]): Turn[] {
@@ -142,10 +172,29 @@ export function InterviewClient({
   const [micDenied, setMicDenied] = useState(false);
   const [micUnavailable, setMicUnavailable] = useState(false);
   const endingRef = useRef(false);
+  const pendingToolsRef = useRef(0);
+  const awaitingFollowUpRef = useRef(false);
+  const followUpTimerRef = useRef<number | null>(null);
+  const hadLiveSessionRef = useRef(false);
   mutedRef.current = muted || aiSpeaking || !listeningOpenRef.current;
 
+  function aiTurnLocked() {
+    return (
+      aiSpeakingRef.current ||
+      pendingToolsRef.current > 0 ||
+      awaitingFollowUpRef.current ||
+      endingRef.current
+    );
+  }
+
   function applyMicGate() {
-    const off = userMutedRef.current || aiSpeakingRef.current || !listeningOpenRef.current || endingRef.current;
+    const off =
+      userMutedRef.current ||
+      aiSpeakingRef.current ||
+      pendingToolsRef.current > 0 ||
+      awaitingFollowUpRef.current ||
+      !listeningOpenRef.current ||
+      endingRef.current;
     try {
       sessionRef.current?.mute(off);
     } catch {
@@ -194,7 +243,8 @@ export function InterviewClient({
               },
               transcription: {
                 model: "gpt-live-transcribe",
-                language: "hy",
+                language: REALTIME_TRANSCRIBE_LANGUAGE,
+                prompt: REALTIME_TRANSCRIBE_PROMPT,
               },
             },
           },
@@ -230,10 +280,51 @@ export function InterviewClient({
     clearInputAudio();
   }
 
+  function noteFollowUpAudioStarted() {
+    awaitingFollowUpRef.current = false;
+    if (followUpTimerRef.current) {
+      window.clearTimeout(followUpTimerRef.current);
+      followUpTimerRef.current = null;
+    }
+    beginAiSpeech();
+  }
+
+  function holdAiTurn(ms = 4500) {
+    awaitingFollowUpRef.current = true;
+    if (listeningOpenRef.current) setVadAutoResponse(false);
+    beginAiSpeech();
+    if (followUpTimerRef.current) window.clearTimeout(followUpTimerRef.current);
+    followUpTimerRef.current = window.setTimeout(() => {
+      followUpTimerRef.current = null;
+      if (pendingToolsRef.current > 0) {
+        holdAiTurn(ms);
+        return;
+      }
+      awaitingFollowUpRef.current = false;
+      if (listeningOpenRef.current) setVadAutoResponse(true);
+      endAiSpeech();
+    }, ms);
+  }
+
+  async function runWhileAiTurnHeld<T>(work: () => Promise<T>, fallback: T): Promise<T> {
+    pendingToolsRef.current += 1;
+    holdAiTurn();
+    try {
+      return await work();
+    } catch {
+      return fallback;
+    } finally {
+      pendingToolsRef.current = Math.max(0, pendingToolsRef.current - 1);
+      holdAiTurn();
+    }
+  }
+
   function endAiSpeech() {
     if (!aiSpeakingRef.current || aiHoldTimerRef.current) return;
+    if (pendingToolsRef.current > 0 || awaitingFollowUpRef.current) return;
     aiHoldTimerRef.current = window.setTimeout(() => {
       aiHoldTimerRef.current = null;
+      if (pendingToolsRef.current > 0 || awaitingFollowUpRef.current) return;
       aiSpeakingRef.current = false;
       setAiSpeaking(false);
       clearInputAudio();
@@ -242,12 +333,13 @@ export function InterviewClient({
         openListening();
         return;
       }
+      if (listeningOpenRef.current) setVadAutoResponse(true);
       applyMicGate();
     }, 700);
   }
 
   function toggleUserMic() {
-    if (aiSpeakingRef.current || !listeningOpenRef.current) return;
+    if (aiTurnLocked() || !listeningOpenRef.current) return;
     userMutedRef.current = !userMutedRef.current;
     setUserMuted(userMutedRef.current);
     applyMicGate();
@@ -263,8 +355,10 @@ export function InterviewClient({
           short_reason: z.string(),
         }),
         async execute({ name, short_reason }) {
-          await sessionAction(token, "process", { name, shortReason: short_reason });
-          return "Recorded process candidate.";
+          return runWhileAiTurnHeld(async () => {
+            await sessionAction(token, "process", { name, shortReason: short_reason });
+            return "Recorded process candidate.";
+          }, "Could not persist the process. Continue the interview.");
         },
       }),
       tool({
@@ -277,13 +371,15 @@ export function InterviewClient({
           evidence_summary: z.string(),
         }),
         async execute({ category, value, process_name, evidence_summary }) {
-          await sessionAction(token, "fact", {
-            category,
-            value,
-            processName: process_name,
-            evidenceSummary: evidence_summary,
-          });
-          return "Recorded key fact.";
+          return runWhileAiTurnHeld(async () => {
+            await sessionAction(token, "fact", {
+              category,
+              value,
+              processName: process_name,
+              evidenceSummary: evidence_summary,
+            });
+            return "Recorded key fact.";
+          }, "Could not persist the fact. Continue the interview.");
         },
       }),
       tool({
@@ -392,8 +488,10 @@ export function InterviewClient({
       const data = (await res.json()) as {
         clientSecret: string;
         model: string;
+        voice?: string;
         instructions?: string;
       };
+      const voice = data.voice || DEFAULT_REALTIME_VOICE;
 
       const micAnalyser = audioCtx.createAnalyser();
       micAnalyser.fftSize = 2048;
@@ -421,9 +519,10 @@ export function InterviewClient({
 
       const agent = new RealtimeAgent({
         name: "Business Process Discovery Interviewer",
+        voice,
         instructions:
           data.instructions ??
-          "You are a business-process discovery interviewer. Default to հայերեն. Follow the respondent if they switch language. Use tools sparingly.",
+          "You are a business-process discovery interviewer. Speak Eastern Armenian (արևելահայերեն) as used in the Republic of Armenia. Follow the respondent if they switch language. Use tools sparingly.",
         tools,
       });
       const session = new RealtimeSession(agent, {
@@ -431,6 +530,7 @@ export function InterviewClient({
         model: data.model,
         config: {
           outputModalities: ["audio"],
+          voice,
           audio: {
             input: {
               turnDetection: {
@@ -441,8 +541,12 @@ export function InterviewClient({
               },
               transcription: {
                 model: "gpt-live-transcribe",
-                language: "hy",
+                language: REALTIME_TRANSCRIBE_LANGUAGE,
+                prompt: REALTIME_TRANSCRIBE_PROMPT,
               },
+            },
+            output: {
+              voice,
             },
           },
         },
@@ -452,6 +556,7 @@ export function InterviewClient({
       });
       session.on("error", () => {
         if (endingRef.current) return;
+        if (pendingToolsRef.current > 0 || awaitingFollowUpRef.current) return;
         void attemptReconnect();
       });
       session.on("audio_start", () => {
@@ -460,7 +565,7 @@ export function InterviewClient({
           introFallbackRef.current = null;
         }
         levelsRef.current.ai = Math.max(levelsRef.current.ai, 0.32);
-        beginAiSpeech();
+        noteFollowUpAudioStarted();
       });
       session.on("audio_stopped", () => {
         levelsRef.current.ai *= 0.15;
@@ -472,10 +577,21 @@ export function InterviewClient({
         clearInputAudio();
       });
       session.on("transport_event", (event) => {
-        if (event.type === "response.created" || event.type === "output_audio_buffer.started") {
+        if (event.type === "response.created") {
           beginAiSpeech();
         }
-        const ignoreUserAudio = !listeningOpenRef.current || aiSpeakingRef.current || endingRef.current;
+        if (event.type === "output_audio_buffer.started") {
+          noteFollowUpAudioStarted();
+        }
+        if (isToolActivityEvent(event)) {
+          holdAiTurn();
+        }
+        const ignoreUserAudio =
+          !listeningOpenRef.current ||
+          aiSpeakingRef.current ||
+          pendingToolsRef.current > 0 ||
+          awaitingFollowUpRef.current ||
+          endingRef.current;
         if (ignoreUserAudio) {
           if (
             event.type === "input_audio_buffer.speech_started" ||
@@ -503,7 +619,10 @@ export function InterviewClient({
       clearInputAudio();
       if (reconnects.current === 0) {
         beginAiSpeech();
-        const speakIn = language === "en" ? "English" : "հայերեն";
+        const speakIn =
+          language === "en"
+            ? "English"
+            : "Eastern Armenian (արևելահայերեն) as spoken in Yerevan and the Republic of Armenia — not Western Armenian";
         const greet = language === "en"
           ? firstName
             ? `Start with "Hello, ${firstName}".`
@@ -514,7 +633,7 @@ export function InterviewClient({
         session.transport.sendEvent({
           type: "response.create",
           response: {
-            instructions: `The respondent just enabled the microphone and is listening. Speak first now, in ${speakIn}. ${greet} Use the given name "${firstName}" if provided — never the word "անուն" or "name". Briefly introduce yourself as an AI interviewer, thank them, say this is not a sales call, you want to understand recurring time-consuming processes, it usually takes 15–20 minutes, they should not share passwords or personal customer data, then ask if you may begin. A few short sentences only. Do not wait for them to speak.`,
+            instructions: `The respondent just enabled the microphone and is listening. Speak first now, in ${speakIn}. ${greet} Use the given name "${firstName}" if provided — never the word "անուն" or "name". Briefly introduce yourself as an AI interviewer, thank them, say you want to understand recurring time-consuming processes, it usually takes 15–20 minutes, then say: «Խնդրում եմ չկիսվել բիզնեսի գաղտնիքներով կամ հաճախորդների անձնական տվյալներով։ Կարող ե՞մ սկսենք հիմա։» Do not say this is a sales call or that it is not a sales call. Do not mention passwords or գաղտնաբառեր. A few short sentences only. Do not wait for them to speak.`,
           },
         });
         introFallbackRef.current = window.setTimeout(() => {
@@ -532,7 +651,14 @@ export function InterviewClient({
       const pump = () => {
         const aiLevel = Math.min(1, readRms(outAnalyser, outBuffer) * 5.8);
         if (aiLevel > 0.06) beginAiSpeech();
-        else if (aiLevel < 0.02 && !introPendingRef.current) endAiSpeech();
+        else if (
+          aiLevel < 0.02 &&
+          !introPendingRef.current &&
+          pendingToolsRef.current === 0 &&
+          !awaitingFollowUpRef.current
+        ) {
+          endAiSpeech();
+        }
         levelsRef.current = {
           user: mutedRef.current ? 0 : Math.min(1, readRms(micAnalyser, micBuffer) * 3.0),
           ai: aiLevel,
@@ -544,6 +670,9 @@ export function InterviewClient({
         cancelAnimationFrame(raf);
         if (aiHoldTimerRef.current) window.clearTimeout(aiHoldTimerRef.current);
         if (introFallbackRef.current) window.clearTimeout(introFallbackRef.current);
+        if (followUpTimerRef.current) window.clearTimeout(followUpTimerRef.current);
+        awaitingFollowUpRef.current = false;
+        pendingToolsRef.current = 0;
         listeningOpenRef.current = false;
         introPendingRef.current = false;
         setListeningOpen(false);
@@ -552,6 +681,7 @@ export function InterviewClient({
         void audioCtx.close();
       };
 
+      hadLiveSessionRef.current = true;
       setStatus("live");
     } catch (err) {
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
@@ -683,13 +813,13 @@ export function InterviewClient({
           <div className="mt-6 space-y-3 text-[15px] leading-7 text-mist">
             <p>
               Սա արհեստական բանականությամբ աշխատող հարցազրույց է՝ հասկանալու կրկնվող
-              գործընթացները, որոնք ժամանակ են խլում {companyName}-ում։ Սա վաճառքի զանգ չէ։
+              գործընթացները, որոնք ժամանակ են խլում {companyName}-ում։
             </p>
             <p>Սովորաբար տևում է 15–20 րոպե։ Դուք նշված եք որպես {role}։</p>
             <ul className="space-y-2 rounded-2xl border border-white/10 bg-ink-2 p-4 text-sm text-cloud/90">
               <li>Պահվում է խոսակցության տեքստը և կառուցվածքային եզրակացությունները։</li>
               <li>Հում աուդիո չի պահվում։</li>
-              <li>Խնդրում ենք չկիսել գաղտնաբառեր, հաճախորդների տվյալներ կամ բանկային տվյալներ։</li>
+              <li>Խնդրում ենք չկիսել բիզնեսի գաղտնիքներ կամ հաճախորդների անձնական տվյալներ։</li>
             </ul>
           </div>
           <button
@@ -719,7 +849,10 @@ export function InterviewClient({
   const lastTurn = visibleTurns[visibleTurns.length - 1];
   const showAiLiveDots = status === "live" && aiSpeaking && lastTurn?.role !== "assistant";
   const voiceMode = status === "connecting" ? "connecting" : status === "live" ? "live" : "idle";
-  const showMicGate = status !== "live";
+  const showMicGate =
+    status === "idle" ||
+    status === "error" ||
+    (status === "connecting" && !hadLiveSessionRef.current);
 
   return (
     <div className="relative mx-auto flex h-dvh max-w-2xl flex-col overflow-hidden px-4 py-5 sm:px-6">

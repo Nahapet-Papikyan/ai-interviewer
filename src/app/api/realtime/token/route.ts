@@ -4,6 +4,7 @@ import { buildInterviewerInstructions } from "@/lib/interview/context";
 import { canTransition } from "@/lib/interview/status";
 import { findInterviewByToken, recordEvent, setStatus } from "@/lib/interview/session";
 import { mintRealtimeClientSecret } from "@/lib/openai/realtime";
+import { realtimeModel, realtimeVoice } from "@/lib/openai/realtime-config";
 import { rateLimit } from "@/lib/rate-limit";
 import { INTERVIEWER_PROMPT_VERSION } from "@/lib/versions";
 
@@ -61,15 +62,19 @@ export async function POST(request: NextRequest) {
     hypotheses: asStringArray(interview.company.hypotheses),
   });
 
+  const model = realtimeModel();
+  const voice = realtimeVoice();
   const clientSecret = await mintRealtimeClientSecret({
     instructions,
-    model: process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime-2.1",
+    model,
+    voice,
   });
 
   return NextResponse.json({
     clientSecret,
     instructions,
-    model: process.env.OPENAI_REALTIME_MODEL ?? "gpt-realtime-2.1",
+    model,
+    voice,
     promptVersion: INTERVIEWER_PROMPT_VERSION,
     interview: {
       id: interview.id,

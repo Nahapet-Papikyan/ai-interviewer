@@ -33,7 +33,9 @@ export type InterviewPromptContext = {
 
 export function languageLabel(code: string) {
   const value = (code || "").toLowerCase();
-  if (!value || value === "hy" || value.startsWith("hy")) return "հայերեն";
+  if (!value || value === "hy" || value.startsWith("hy")) {
+    return "Eastern Armenian (արևելահայերեն), Republic of Armenia / Yerevan standard";
+  }
   if (value === "ru" || value.startsWith("ru")) return "Russian";
   if (value === "en" || value.startsWith("en")) return "English";
   return code;
