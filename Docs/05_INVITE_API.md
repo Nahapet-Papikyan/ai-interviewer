@@ -1,19 +1,21 @@
-# Invite API — create interview links
+# Invite API and ChatGPT MCP plugin
 
-Use this from ChatGPT (Custom GPT Actions) or any client to store company/contact data and get a unique interview URL to send by email.
+Create unique interview links from company/contact data.
 
 Base URL: `https://www.bussnes-research.am`
 
-Auth: `Authorization: Bearer <INGEST_API_KEY>`  
-The key lives in `.env` as `INGEST_API_KEY`.
-
 ---
 
-## Create interview link
+## ChatGPT custom MCP plugin
 
-`POST https://www.bussnes-research.am/api/invitations`
+The ChatGPT plugin form needs an **MCP server URL**, not the site root and not the REST path.
 
-**Body**
+**MCP URL:** `https://www.bussnes-research.am/api/mcp`
+
+Authentication in the ChatGPT form: **None**.  
+`INGEST_API_KEY` stays on the server. ChatGPT never sends it.
+
+Tool: `createInterviewInvitation`
 
 ```json
 {
@@ -21,40 +23,34 @@ The key lives in `.env` as `INGEST_API_KEY`.
   "lastName": "Hakobyan",
   "role": "COO",
   "email": "ani@company.am",
-  "phone": "+374...",
   "language": "hy",
   "companyName": "Example LLC",
   "vertical": "Wholesale",
   "website": "https://company.am",
   "employeeRange": "20-40",
-  "notes": "Reached via intro call",
-  "verifiedFacts": ["Uses 1C for sales"],
-  "hypotheses": ["Order confirmation may still be manual"]
+  "notes": "...",
+  "verifiedFacts": [],
+  "hypotheses": []
 }
 ```
 
 Required: `firstName`, `role`, `companyName`  
-Optional: everything else. `language`: `hy` | `en` | `ru` (default `hy`)
+The tool returns `interviewUrl` to put in the email.
 
-**Response**
+After deploy, paste exactly:
 
-```json
-{
-  "interviewUrl": "https://www.bussnes-research.am/i/...",
-  "interviewId": "...",
-  "companyName": "Example LLC",
-  "respondentName": "Ani",
-  "language": "hy"
-}
-```
+`https://www.bussnes-research.am/api/mcp`
 
-Send `interviewUrl` by email. The plaintext link is returned once.
-
-Same company/contact is reused if it already exists; each call still creates a **new** link.
+If this app is served from another host, use that host + `/api/mcp`.
 
 ---
 
-## curl
+## REST (curl / internal)
+
+`POST https://www.bussnes-research.am/api/invitations`
+
+Auth: `Authorization: Bearer <INGEST_API_KEY>`  
+The key lives in `.env` as `INGEST_API_KEY`.
 
 ```bash
 curl -X POST https://www.bussnes-research.am/api/invitations \
@@ -63,12 +59,10 @@ curl -X POST https://www.bussnes-research.am/api/invitations \
   -d '{"firstName":"Ani","role":"COO","email":"ani@company.am","companyName":"Example LLC","vertical":"Wholesale","language":"hy"}'
 ```
 
----
+Response includes `interviewUrl`. The plaintext link is returned once.
 
-## ChatGPT Custom GPT Action
+Same company/contact is reused if it already exists; each call still creates a **new** link.
 
-1. Import schema: `GET https://www.bussnes-research.am/api/invitations/spec` (same Bearer token)
-2. Authentication: Bearer → `INGEST_API_KEY`
-3. Instruct the GPT: collect company + respondent details, call `createInterviewInvitation`, then return only `interviewUrl` for the email
+OpenAPI: `GET /api/invitations/spec` (Bearer required)
 
-Production `APP_URL` must be `https://www.bussnes-research.am` so returned links use that host. The live site must serve this Next.js app (or proxy `/api/invitations` and `/i/{token}` to it).
+Production `APP_URL` must be `https://www.bussnes-research.am` so returned links use that host.
