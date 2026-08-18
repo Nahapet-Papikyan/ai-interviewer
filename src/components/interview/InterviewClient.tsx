@@ -7,21 +7,69 @@ import { BrandLogo } from "@/components/brand/Logo";
 import { MicPermissionModal } from "@/components/interview/MicPermissionModal";
 import { VoiceOrb, type VoiceLevels } from "@/components/interview/VoiceOrb";
 import {
+  CONTINUE_RESPONSE_INSTRUCTIONS,
+  NOISE_IGNORE_NOTE,
+  openingResponseInstructions,
+  TOOL_REJECT_RESULT,
+  TOOL_SILENT_RESULT,
+  cancelConnectionTeardown,
+  closeInterviewConnection,
+  conversationItemFromTurn,
+  isConnecting,
+  isCurrentGeneration,
+  markConnecting,
+  markOpeningTriggered,
+  nextConnectionGeneration,
+  registerSessionClose,
+  rememberPersistEventId,
+  scheduleConnectionTeardown,
+  wasOpeningTriggered,
+} from "@/lib/interview/client-session";
+import {
+  configureClientInterviewTrace,
+  flushClientTraces,
+  interviewLog,
+  isBenignRealtimeError,
+  isDevInterviewDebug,
+  previewText,
+  summarizeUnknownError,
+} from "@/lib/interview/logging";
+import { restoreWindow } from "@/lib/interview/messages";
+import {
+  hydrateRuntimeState,
+  shouldConnectRealtime,
+  shouldTriggerOpening,
+  type InterviewRuntimeState,
+} from "@/lib/interview/runtime-state";
+import { assessTranscriptQuality, isNoiseTranscript, qualitySystemNote } from "@/lib/interview/transcript-quality";
+import { attachProcessedMic } from "@/lib/interview/mic-processing";
+import {
+  BARGE_IN_MIN_MS,
   DEFAULT_REALTIME_VOICE,
+  REALTIME_NOISE_REDUCTION,
+  REALTIME_RECONNECT,
   REALTIME_TRANSCRIBE_LANGUAGE,
   REALTIME_TRANSCRIBE_PROMPT,
+  voiceTurnDetection,
 } from "@/lib/openai/realtime-config";
 
-type Turn = { role: "user" | "assistant" | "system" | "tool"; content: string };
+type Turn = {
+  role: "user" | "assistant" | "system" | "tool";
+  content: string;
+  providerEventId?: string | null;
+};
 
 type Props = {
   token: string;
+  interviewId: string;
   firstName: string;
   companyName: string;
   role: string;
   alreadyConsented: boolean;
   existingTurns: Turn[];
   language?: string;
+  initialRuntime?: InterviewRuntimeState;
+  interviewStatus?: string;
 };
 
 function extractTurns(history: unknown[]): Turn[] {
@@ -31,6 +79,7 @@ function extractTurns(history: unknown[]): Turn[] {
     const rec = item as {
       type?: string;
       role?: string;
+      itemId?: string;
       content?: Array<{ type?: string; text?: string; transcript?: string }>;
     };
     if (rec.type !== "message") continue;
@@ -41,34 +90,9 @@ function extractTurns(history: unknown[]): Turn[] {
       .filter(Boolean)
       .join(" ")
       .trim();
-    if (content) turns.push({ role, content });
+    if (content) turns.push({ role, content, providerEventId: rec.itemId ?? null });
   }
   return turns;
-}
-
-function isToolActivityEvent(event: unknown): boolean {
-  if (!event || typeof event !== "object") return false;
-  const rec = event as {
-    type?: string;
-    item?: { type?: string };
-    response?: { output?: Array<{ type?: string }> };
-  };
-  if (
-    rec.type === "response.function_call_arguments.delta" ||
-    rec.type === "response.function_call_arguments.done"
-  ) {
-    return true;
-  }
-  if (
-    (rec.type === "response.output_item.added" || rec.type === "response.output_item.done") &&
-    rec.item?.type === "function_call"
-  ) {
-    return true;
-  }
-  if (rec.type === "response.done") {
-    return rec.response?.output?.some((item) => item.type === "function_call") ?? false;
-  }
-  return false;
 }
 
 function mergeTurns(previous: Turn[], incoming: Turn[]): Turn[] {
@@ -120,6 +144,10 @@ function readRms(analyser: AnalyserNode, buffer: Uint8Array<ArrayBuffer>) {
   return Math.sqrt(sum / buffer.length);
 }
 
+function nowMs() {
+  return Date.now();
+}
+
 function statusCopy(status: "idle" | "connecting" | "live" | "text" | "ended" | "error") {
   switch (status) {
     case "live":
@@ -137,17 +165,20 @@ function statusCopy(status: "idle" | "connecting" | "live" | "text" | "ended" | 
 
 export function InterviewClient({
   token,
+  interviewId,
   firstName,
   companyName,
   role,
   alreadyConsented,
   existingTurns,
   language = "hy",
+  initialRuntime,
+  interviewStatus = "CONSENTED",
 }: Props) {
   const [consented, setConsented] = useState(alreadyConsented);
   const [status, setStatus] = useState<"idle" | "connecting" | "live" | "text" | "ended" | "error">("idle");
-  const [muted, setMuted] = useState(false);
   const [error, setError] = useState("");
+  const statusRef = useRef(status);
   const [turns, setTurns] = useState<Turn[]>(existingTurns);
   const [textInput, setTextInput] = useState("");
   const sessionRef = useRef<RealtimeSession | null>(null);
@@ -173,26 +204,58 @@ export function InterviewClient({
   const [micUnavailable, setMicUnavailable] = useState(false);
   const endingRef = useRef(false);
   const pendingToolsRef = useRef(0);
-  const awaitingFollowUpRef = useRef(false);
-  const followUpTimerRef = useRef<number | null>(null);
-  const hadLiveSessionRef = useRef(false);
-  mutedRef.current = muted || aiSpeaking || !listeningOpenRef.current;
+  const responseInProgressRef = useRef(false);
+  const lastResponseIdRef = useRef<string | null>(null);
+  const runtimeRef = useRef<InterviewRuntimeState>(
+    hydrateRuntimeState(initialRuntime, existingTurns),
+  );
+  const interviewIdRef = useRef(interviewId);
+  const generationRef = useRef(0);
+  const flaggedTranscriptsRef = useRef(new Set<string>());
+  const bargeInTimerRef = useRef<number | null>(null);
+  const speechStartedAtRef = useRef<number | null>(null);
+  const micProcessingStopRef = useRef<(() => void) | null>(null);
+  const lastRealtimeErrorRef = useRef<unknown>(null);
+  const [hadLiveSession, setHadLiveSession] = useState(false);
 
-  function aiTurnLocked() {
-    return (
-      aiSpeakingRef.current ||
-      pendingToolsRef.current > 0 ||
-      awaitingFollowUpRef.current ||
-      endingRef.current
-    );
+  useEffect(() => {
+    interviewIdRef.current = interviewId;
+  }, [interviewId]);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  useEffect(() => {
+    configureClientInterviewTrace({ token, interviewId });
+    interviewLog("INTERVIEW_PAGE_MOUNTED", {
+      interviewId,
+      interviewStatus,
+      alreadyConsented,
+      existingTurns: existingTurns.length,
+    });
+    return () => {
+      interviewLog("INTERVIEW_PAGE_UNMOUNTED", {
+        interviewId: interviewIdRef.current,
+        connectionGeneration: generationRef.current,
+        phase: runtimeRef.current.phase,
+        statusHint: endingRef.current ? "ending" : "unmount",
+      });
+      void flushClientTraces(true);
+      configureClientInterviewTrace(null);
+    };
+    // Mount/unmount tracing only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, interviewId, interviewStatus, alreadyConsented]);
+
+  function alive(generation: number) {
+    return isCurrentGeneration(token, generation) && generationRef.current === generation && !endingRef.current;
   }
 
   function applyMicGate() {
     const off =
       userMutedRef.current ||
-      aiSpeakingRef.current ||
       pendingToolsRef.current > 0 ||
-      awaitingFollowUpRef.current ||
       !listeningOpenRef.current ||
       endingRef.current;
     try {
@@ -203,16 +266,12 @@ export function InterviewClient({
     mediaStreamRef.current?.getAudioTracks().forEach((track) => {
       track.enabled = !off;
     });
-    setMuted((prev) => (prev === off ? prev : off));
+    mutedRef.current = off;
   }
 
   function closeSessionSoon() {
     window.setTimeout(() => {
-      try {
-        sessionRef.current?.close();
-      } catch {
-        // already closed
-      }
+      closeInterviewConnection(token);
       sessionRef.current = null;
       audioCleanupRef.current?.();
       audioCleanupRef.current = null;
@@ -227,19 +286,24 @@ export function InterviewClient({
     }
   }
 
-  function setVadAutoResponse(enabled: boolean) {
+  function setVadAutoResponse(enabled: boolean, instructions?: string) {
+    const turn = voiceTurnDetection(enabled);
     try {
       sessionRef.current?.transport.sendEvent({
         type: "session.update",
         session: {
           type: "realtime",
+          ...(instructions ? { instructions } : {}),
           audio: {
             input: {
               turn_detection: {
-                type: "semantic_vad",
-                eagerness: "medium",
-                create_response: enabled,
-                interrupt_response: false,
+                type: turn.type,
+                eagerness: turn.eagerness,
+                create_response: turn.createResponse,
+                interrupt_response: turn.interruptResponse,
+              },
+              noise_reduction: {
+                type: REALTIME_NOISE_REDUCTION.type,
               },
               transcription: {
                 model: "gpt-live-transcribe",
@@ -257,11 +321,14 @@ export function InterviewClient({
 
   function openListening() {
     if (listeningOpenRef.current) return;
-    clearInputAudio();
     listeningOpenRef.current = true;
     setListeningOpen(true);
     setVadAutoResponse(true);
     applyMicGate();
+    interviewLog("LISTENING_OPEN", {
+      interviewId: interviewIdRef.current,
+      connectionGeneration: generationRef.current,
+    });
   }
 
   function beginAiSpeech() {
@@ -269,117 +336,217 @@ export function InterviewClient({
       window.clearTimeout(aiHoldTimerRef.current);
       aiHoldTimerRef.current = null;
     }
-    if (aiSpeakingRef.current) {
-      applyMicGate();
-      clearInputAudio();
-      return;
-    }
+    responseInProgressRef.current = true;
+    if (aiSpeakingRef.current) return;
     aiSpeakingRef.current = true;
     setAiSpeaking(true);
-    applyMicGate();
-    clearInputAudio();
   }
 
   function noteFollowUpAudioStarted() {
-    awaitingFollowUpRef.current = false;
-    if (followUpTimerRef.current) {
-      window.clearTimeout(followUpTimerRef.current);
-      followUpTimerRef.current = null;
-    }
     beginAiSpeech();
   }
 
-  function holdAiTurn(ms = 4500) {
-    awaitingFollowUpRef.current = true;
-    if (listeningOpenRef.current) setVadAutoResponse(false);
-    beginAiSpeech();
-    if (followUpTimerRef.current) window.clearTimeout(followUpTimerRef.current);
-    followUpTimerRef.current = window.setTimeout(() => {
-      followUpTimerRef.current = null;
-      if (pendingToolsRef.current > 0) {
-        holdAiTurn(ms);
-        return;
-      }
-      awaitingFollowUpRef.current = false;
-      if (listeningOpenRef.current) setVadAutoResponse(true);
-      endAiSpeech();
-    }, ms);
-  }
-
-  async function runWhileAiTurnHeld<T>(work: () => Promise<T>, fallback: T): Promise<T> {
+  async function runToolSilently<T>(work: () => Promise<T>, fallback: T): Promise<T> {
     pendingToolsRef.current += 1;
-    holdAiTurn();
+    applyMicGate();
+    interviewLog("TOOL_CALL_STARTED", {
+      interviewId: interviewIdRef.current,
+      connectionGeneration: generationRef.current,
+    });
     try {
       return await work();
     } catch {
       return fallback;
     } finally {
       pendingToolsRef.current = Math.max(0, pendingToolsRef.current - 1);
-      holdAiTurn();
+      applyMicGate();
+      interviewLog("TOOL_CALL_COMPLETED", {
+        interviewId: interviewIdRef.current,
+        connectionGeneration: generationRef.current,
+      });
     }
   }
 
   function endAiSpeech() {
     if (!aiSpeakingRef.current || aiHoldTimerRef.current) return;
-    if (pendingToolsRef.current > 0 || awaitingFollowUpRef.current) return;
+    if (pendingToolsRef.current > 0) return;
     aiHoldTimerRef.current = window.setTimeout(() => {
       aiHoldTimerRef.current = null;
-      if (pendingToolsRef.current > 0 || awaitingFollowUpRef.current) return;
+      if (pendingToolsRef.current > 0) return;
       aiSpeakingRef.current = false;
+      responseInProgressRef.current = false;
       setAiSpeaking(false);
-      clearInputAudio();
       if (introPendingRef.current) {
         introPendingRef.current = false;
         openListening();
         return;
       }
-      if (listeningOpenRef.current) setVadAutoResponse(true);
       applyMicGate();
-    }, 700);
+    }, 400);
+  }
+
+  function restoreLiveVoice(reason: string) {
+    if (endingRef.current || !sessionRef.current) return;
+    if (statusRef.current !== "text" && statusRef.current !== "error") return;
+    interviewLog("VOICE_UI_RESTORED", {
+      interviewId: interviewIdRef.current,
+      connectionGeneration: generationRef.current,
+      reason,
+      previous: statusRef.current,
+    });
+    statusRef.current = "live";
+    setStatus("live");
+    setError("");
+  }
+
+  function cancelAssistantIfSpeaking(reason = "manual") {
+    const hadResponse = aiSpeakingRef.current || responseInProgressRef.current;
+    if (!hadResponse) {
+      interviewLog("ASSISTANT_CANCEL_SKIPPED", {
+        interviewId: interviewIdRef.current,
+        connectionGeneration: generationRef.current,
+        reason,
+      });
+      return;
+    }
+    try {
+      sessionRef.current?.interrupt();
+    } catch {
+      // transport may not support interrupt yet
+    }
+    aiSpeakingRef.current = false;
+    responseInProgressRef.current = false;
+    setAiSpeaking(false);
+    if (aiHoldTimerRef.current) {
+      window.clearTimeout(aiHoldTimerRef.current);
+      aiHoldTimerRef.current = null;
+    }
+    interviewLog("ASSISTANT_RESPONSE_CANCELLED", {
+      interviewId: interviewIdRef.current,
+      connectionGeneration: generationRef.current,
+      responseId: lastResponseIdRef.current,
+      reason,
+    });
+  }
+
+  function handleUserSpeechStarted() {
+    if (!listeningOpenRef.current || endingRef.current) {
+      interviewLog("SPEECH_STARTED_IGNORED", {
+        interviewId: interviewIdRef.current,
+        connectionGeneration: generationRef.current,
+        listeningOpen: listeningOpenRef.current,
+        ending: endingRef.current,
+      });
+      clearInputAudio();
+      return;
+    }
+    speechStartedAtRef.current = nowMs();
+    levelsRef.current.user = Math.max(levelsRef.current.user, 0.26);
+    restoreLiveVoice("user_speech");
+    interviewLog("SPEECH_STARTED", {
+      interviewId: interviewIdRef.current,
+      connectionGeneration: generationRef.current,
+      aiSpeaking: aiSpeakingRef.current,
+      responseInProgress: responseInProgressRef.current,
+    });
+    if (!(aiSpeakingRef.current || responseInProgressRef.current)) return;
+    if (bargeInTimerRef.current) window.clearTimeout(bargeInTimerRef.current);
+    interviewLog("BARGE_IN_ARMED", {
+      interviewId: interviewIdRef.current,
+      connectionGeneration: generationRef.current,
+      waitMs: BARGE_IN_MIN_MS,
+    });
+    bargeInTimerRef.current = window.setTimeout(() => {
+      bargeInTimerRef.current = null;
+      if (!listeningOpenRef.current || endingRef.current) return;
+      if (!aiSpeakingRef.current && !responseInProgressRef.current) return;
+      interviewLog("BARGE_IN_FIRED", {
+        interviewId: interviewIdRef.current,
+        connectionGeneration: generationRef.current,
+      });
+      cancelAssistantIfSpeaking("barge_in");
+    }, BARGE_IN_MIN_MS);
+  }
+
+  function handleUserSpeechStopped() {
+    const started = speechStartedAtRef.current;
+    speechStartedAtRef.current = null;
+    const elapsed = started ? nowMs() - started : 0;
+    const armed = bargeInTimerRef.current != null;
+    if (bargeInTimerRef.current) {
+      window.clearTimeout(bargeInTimerRef.current);
+      bargeInTimerRef.current = null;
+    }
+    levelsRef.current.user *= 0.12;
+    const dropped = elapsed > 0 && elapsed < BARGE_IN_MIN_MS;
+    interviewLog("SPEECH_STOPPED", {
+      interviewId: interviewIdRef.current,
+      connectionGeneration: generationRef.current,
+      elapsedMs: elapsed,
+      droppedAsClick: dropped,
+      abortedBargeIn: armed && dropped,
+    });
+    if (dropped) {
+      clearInputAudio();
+    }
   }
 
   function toggleUserMic() {
-    if (aiTurnLocked() || !listeningOpenRef.current) return;
+    if (pendingToolsRef.current > 0 || endingRef.current || !listeningOpenRef.current) return;
     userMutedRef.current = !userMutedRef.current;
     setUserMuted(userMutedRef.current);
     applyMicGate();
   }
 
+  function persistRuntime(patch: Partial<InterviewRuntimeState>) {
+    runtimeRef.current = { ...runtimeRef.current, ...patch };
+    void sessionAction(token, "runtime", patch);
+  }
+
+  /* eslint-disable react-hooks/refs, react-hooks/exhaustive-deps -- tool execute closures run later via the Realtime SDK */
   const tools = useMemo(
     () => [
       tool({
         name: "record_process_candidate",
-        description: "Mark a promising recurring process. Provisional, not final analysis.",
+        description:
+          "Silently mark a promising recurring process. Never speak before or after this tool. After the result, ask exactly one next question.",
         parameters: z.object({
           name: z.string(),
           short_reason: z.string(),
         }),
         async execute({ name, short_reason }) {
-          return runWhileAiTurnHeld(async () => {
+          return runToolSilently(async () => {
             await sessionAction(token, "process", { name, shortReason: short_reason });
-            return "Recorded process candidate.";
-          }, "Could not persist the process. Continue the interview.");
+            return TOOL_SILENT_RESULT;
+          }, TOOL_SILENT_RESULT);
         },
       }),
       tool({
         name: "record_key_fact",
-        description: "Store a critical volume/time/people/system/error/impact/pilot fact.",
+        description:
+          "Silently store a critical fact only after the respondent clearly stated it or confirmed it. Never record garbled speech. Never speak about this tool.",
         parameters: z.object({
           category: z.enum(["volume", "time", "people", "system", "error", "impact", "pilot"]),
           value: z.string(),
           process_name: z.string(),
           evidence_summary: z.string(),
+          status: z.enum(["CONFIRMED", "UNCERTAIN"]),
+          raw_transcript: z.string(),
         }),
-        async execute({ category, value, process_name, evidence_summary }) {
-          return runWhileAiTurnHeld(async () => {
-            await sessionAction(token, "fact", {
+        async execute({ category, value, process_name, evidence_summary, status, raw_transcript }) {
+          return runToolSilently(async () => {
+            const result = await sessionAction(token, "fact", {
               category,
               value,
               processName: process_name,
               evidenceSummary: evidence_summary,
+              status: status ?? "CONFIRMED",
+              rawTranscript: raw_transcript || undefined,
+              sourceRole: "user",
             });
-            return "Recorded key fact.";
-          }, "Could not persist the fact. Continue the interview.");
+            if (result?.recorded === false) return TOOL_REJECT_RESULT;
+            return TOOL_SILENT_RESULT;
+          }, TOOL_SILENT_RESULT);
         },
       }),
       tool({
@@ -398,14 +565,16 @@ export function InterviewClient({
           );
           latestTurnsRef.current = historyTurns;
           await sessionAction(token, "complete", { turns: historyTurns });
+          persistRuntime({ completed: true, phase: "COMPLETED" });
           setStatus("ended");
           closeSessionSoon();
           return "Interview marked complete.";
         },
       }),
     ],
-    [token, turns],
+    [token],
   );
+  /* eslint-enable react-hooks/refs, react-hooks/exhaustive-deps */
 
   async function persistHistory(history: unknown[]) {
     const extracted = extractTurns(history);
@@ -419,7 +588,73 @@ export function InterviewClient({
       });
     latestTurnsRef.current = next;
     if (!unchanged) setTurns(next);
+
+    const lastTurn = incoming.at(-1);
+    const lastUser = [...incoming].reverse().find((turn) => turn.role === "user");
+    if (lastUser) {
+      const noise = isNoiseTranscript(lastUser.content);
+      const quality = assessTranscriptQuality(lastUser.content);
+      const key = lastUser.providerEventId || lastUser.content;
+      const latestIsThisUser = lastTurn?.role === "user" && lastTurn.content === lastUser.content;
+      if (noise) {
+        if (!flaggedTranscriptsRef.current.has(`noise:${key}`)) {
+          flaggedTranscriptsRef.current.add(`noise:${key}`);
+          interviewLog("NOISE_TRANSCRIPT_IGNORED", {
+            interviewId: interviewIdRef.current,
+            reasons: ["noise_or_filler"],
+            connectionGeneration: generationRef.current,
+            chars: lastUser.content.length,
+            preview: previewText(lastUser.content),
+            cancelledResponse: latestIsThisUser,
+          });
+          try {
+            if (latestIsThisUser) cancelAssistantIfSpeaking("noise_transcript");
+            sessionRef.current?.transport.sendEvent({
+              type: "conversation.item.create",
+              item: {
+                type: "message",
+                role: "system",
+                content: [{ type: "input_text", text: NOISE_IGNORE_NOTE }],
+              },
+            });
+          } catch {
+            // ignore
+          }
+        }
+      } else if (quality.needsClarification && !flaggedTranscriptsRef.current.has(key)) {
+        flaggedTranscriptsRef.current.add(key);
+        interviewLog("UNCERTAIN_TRANSCRIPT_DETECTED", {
+          interviewId: interviewIdRef.current,
+          reasons: quality.reasons,
+          connectionGeneration: generationRef.current,
+          chars: lastUser.content.length,
+          preview: previewText(lastUser.content),
+        });
+        try {
+          sessionRef.current?.transport.sendEvent({
+            type: "conversation.item.create",
+            item: {
+              type: "message",
+              role: "system",
+              content: [{ type: "input_text", text: qualitySystemNote(lastUser.content, quality) }],
+            },
+          });
+        } catch {
+          // ignore
+        }
+      }
+      if (!noise && runtimeRef.current.openingDelivered && !runtimeRef.current.consentReceived) {
+        persistRuntime({
+          consentReceived: true,
+          interviewStarted: true,
+          phase: runtimeRef.current.activeProcess ? "DEEP_DIVE" : "DISCOVERY",
+        });
+      }
+    }
+
     if (next.length === 0 || incoming.length === 0) return;
+    const ids = incoming.map((turn) => turn.providerEventId).filter(Boolean) as string[];
+    if (ids.length && ids.every((id) => !rememberPersistEventId(token, id))) return;
     if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
     persistTimerRef.current = window.setTimeout(() => {
       void sessionAction(token, "history", { turns: latestTurnsRef.current });
@@ -427,8 +662,27 @@ export function InterviewClient({
   }
 
   async function connectVoice() {
-    if (connectingRef.current) return;
+    if (endingRef.current) return;
+    if (!shouldConnectRealtime(interviewStatus) || runtimeRef.current.completed) {
+      interviewLog("CONNECT_SKIPPED_FINISHED", {
+        interviewId: interviewIdRef.current,
+        interviewStatus,
+        completed: runtimeRef.current.completed,
+      });
+      setStatus("ended");
+      return;
+    }
+    if (connectingRef.current || isConnecting(token)) {
+      interviewLog("CONNECT_SKIPPED_IN_FLIGHT", {
+        interviewId: interviewIdRef.current,
+        connectingRef: connectingRef.current,
+      });
+      return;
+    }
     connectingRef.current = true;
+    markConnecting(token, true);
+    const generation = nextConnectionGeneration(token);
+    generationRef.current = generation;
     setStatus("connecting");
     setError("");
     setMicDenied(false);
@@ -437,8 +691,20 @@ export function InterviewClient({
     setListeningOpen(false);
     userMutedRef.current = false;
     listeningOpenRef.current = false;
+    responseInProgressRef.current = false;
+    interviewLog("CONNECT_START", {
+      interviewId: interviewIdRef.current,
+      connectionGeneration: generation,
+      reconnectAttempt: reconnects.current,
+      phase: runtimeRef.current.phase,
+    });
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
+        interviewLog("MIC_UNAVAILABLE", {
+          interviewId: interviewIdRef.current,
+          connectionGeneration: generation,
+          reason: "no_media_devices",
+        });
         setMicUnavailable(true);
         setStatus("idle");
         return;
@@ -459,19 +725,31 @@ export function InterviewClient({
       });
 
       const mediaStream = await mediaStreamPromise;
+      if (!alive(generation)) {
+        mediaStream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       mediaStream.getAudioTracks().forEach((track) => {
         track.enabled = false;
       });
       mediaStreamRef.current = mediaStream;
       listeningOpenRef.current = false;
-      introPendingRef.current = reconnects.current === 0;
-      setMuted(true);
+      mutedRef.current = true;
 
       const audioCtx = new AudioContext();
       await audioCtx.resume();
 
       const res = await tokenPromise;
+      if (!alive(generation)) {
+        mediaStream.getTracks().forEach((track) => track.stop());
+        void audioCtx.close();
+        return;
+      }
       if (res.status === 409) {
+        interviewLog("TOKEN_REJECTED_FINISHED", {
+          interviewId: interviewIdRef.current,
+          connectionGeneration: generation,
+        });
         mediaStream.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
         void audioCtx.close();
@@ -480,6 +758,11 @@ export function InterviewClient({
         return;
       }
       if (!res.ok) {
+        interviewLog("TOKEN_FAILED", {
+          interviewId: interviewIdRef.current,
+          connectionGeneration: generation,
+          status: res.status,
+        });
         mediaStream.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
         void audioCtx.close();
@@ -490,8 +773,55 @@ export function InterviewClient({
         model: string;
         voice?: string;
         instructions?: string;
+        interviewId?: string;
+        continuation?: boolean;
+        runtimeState?: InterviewRuntimeState;
+        recentTurns?: Turn[];
+        promptVersion?: string;
+        promptSource?: string;
+        promptHash?: string;
       };
+      if (data.interviewId) interviewIdRef.current = data.interviewId;
+      if (data.runtimeState) {
+        runtimeRef.current = hydrateRuntimeState(data.runtimeState, data.recentTurns ?? latestTurnsRef.current);
+      }
+      const restoredTurns = restoreWindow(data.recentTurns?.length ? data.recentTurns : latestTurnsRef.current);
       const voice = data.voice || DEFAULT_REALTIME_VOICE;
+      const turn = voiceTurnDetection(false);
+      const triggerOpening = shouldTriggerOpening({
+        openingDelivered: runtimeRef.current.openingDelivered || wasOpeningTriggered(token),
+        completed: runtimeRef.current.completed,
+        isReconnect: Boolean(data.continuation) || reconnects.current > 0,
+        assistantTurnCount: restoredTurns.filter((turnItem) => turnItem.role === "assistant").length,
+      });
+      introPendingRef.current = triggerOpening;
+
+      if (isDevInterviewDebug()) {
+        console.debug({
+          event: "INTERVIEW_SESSION_CREATED",
+          interviewId: interviewIdRef.current,
+          promptVersion: data.promptVersion,
+          promptSource: data.promptSource,
+          promptHash: data.promptHash,
+          phase: runtimeRef.current.phase,
+          openingDelivered: runtimeRef.current.openingDelivered,
+          consentReceived: runtimeRef.current.consentReceived,
+          continuation: data.continuation,
+          connectionGeneration: generation,
+          language,
+        });
+      }
+      interviewLog(data.continuation ? "REALTIME_RECONNECTED" : "REALTIME_CONNECTED", {
+        interviewId: interviewIdRef.current,
+        promptVersion: data.promptVersion,
+        promptHash: data.promptHash,
+        connectionGeneration: generation,
+        continuation: Boolean(data.continuation),
+        triggerOpening,
+        restoredTurns: restoredTurns.length,
+        phase: runtimeRef.current.phase,
+        openingDelivered: runtimeRef.current.openingDelivered,
+      });
 
       const micAnalyser = audioCtx.createAnalyser();
       micAnalyser.fftSize = 2048;
@@ -504,10 +834,45 @@ export function InterviewClient({
       const micBuffer = new Uint8Array(micAnalyser.fftSize) as Uint8Array<ArrayBuffer>;
       const outBuffer = new Uint8Array(outAnalyser.fftSize) as Uint8Array<ArrayBuffer>;
 
+      let sendStream = mediaStream;
+      let usedProcessedMic = false;
+      try {
+        const processed = attachProcessedMic(audioCtx, mediaStream);
+        micProcessingStopRef.current?.();
+        micProcessingStopRef.current = processed.stop;
+        sendStream = processed.stream;
+        usedProcessedMic = true;
+      } catch (err) {
+        micProcessingStopRef.current = null;
+        interviewLog("MIC_PROCESSING_FALLBACK", {
+          interviewId: interviewIdRef.current,
+          connectionGeneration: generation,
+          error: summarizeUnknownError(err),
+        });
+      }
+      interviewLog("MIC_STREAM_READY", {
+        interviewId: interviewIdRef.current,
+        connectionGeneration: generation,
+        processed: usedProcessedMic,
+        sendTracks: sendStream.getAudioTracks().length,
+      });
+
       let remoteTapped = false;
       const transport = new OpenAIRealtimeWebRTC({
-        mediaStream,
+        mediaStream: sendStream,
         changePeerConnection: (peerConnection) => {
+          const logState = (kind: string) => {
+            interviewLog(kind, {
+              interviewId: interviewIdRef.current,
+              connectionGeneration: generation,
+              connectionState: peerConnection.connectionState,
+              iceConnectionState: peerConnection.iceConnectionState,
+              iceGatheringState: peerConnection.iceGatheringState,
+              signalingState: peerConnection.signalingState,
+            });
+          };
+          peerConnection.addEventListener("connectionstatechange", () => logState("WEBRTC_CONNECTION_STATE"));
+          peerConnection.addEventListener("iceconnectionstatechange", () => logState("WEBRTC_ICE_STATE"));
           peerConnection.addEventListener("track", (event) => {
             if (event.track.kind !== "audio" || remoteTapped) return;
             remoteTapped = true;
@@ -534,10 +899,13 @@ export function InterviewClient({
           audio: {
             input: {
               turnDetection: {
-                type: "semantic_vad",
-                eagerness: "medium",
+                type: turn.type,
+                eagerness: turn.eagerness,
                 createResponse: false,
-                interruptResponse: false,
+                interruptResponse: turn.interruptResponse,
+              },
+              noiseReduction: {
+                type: REALTIME_NOISE_REDUCTION.type,
               },
               transcription: {
                 model: "gpt-live-transcribe",
@@ -552,111 +920,240 @@ export function InterviewClient({
         },
       });
       session.on("history_updated", (history) => {
+        if (!alive(generation)) return;
         persistHistory(history as unknown[]).catch(() => undefined);
       });
-      session.on("error", () => {
-        if (endingRef.current) return;
-        if (pendingToolsRef.current > 0 || awaitingFollowUpRef.current) return;
+      session.on("error", (error) => {
+        if (!alive(generation)) {
+          interviewLog("SESSION_ERROR_STALE", {
+            interviewId: interviewIdRef.current,
+            connectionGeneration: generation,
+            currentGeneration: generationRef.current,
+            error: summarizeUnknownError(error),
+          });
+          return;
+        }
+        if (isBenignRealtimeError(error) || isBenignRealtimeError(lastRealtimeErrorRef.current)) {
+          interviewLog("SESSION_ERROR_IGNORED", {
+            interviewId: interviewIdRef.current,
+            connectionGeneration: generation,
+            error: summarizeUnknownError(error),
+            lastTransportError: summarizeUnknownError(lastRealtimeErrorRef.current),
+          });
+          lastRealtimeErrorRef.current = null;
+          restoreLiveVoice("benign_session_error");
+          return;
+        }
+        if (pendingToolsRef.current > 0) {
+          interviewLog("SESSION_ERROR_DURING_TOOL", {
+            interviewId: interviewIdRef.current,
+            connectionGeneration: generation,
+            error: summarizeUnknownError(error),
+          });
+          return;
+        }
+        interviewLog("REALTIME_DISCONNECTED", {
+          interviewId: interviewIdRef.current,
+          connectionGeneration: generation,
+          error: summarizeUnknownError(error),
+        });
         void attemptReconnect();
       });
       session.on("audio_start", () => {
+        if (!alive(generation)) return;
         if (introFallbackRef.current) {
           window.clearTimeout(introFallbackRef.current);
           introFallbackRef.current = null;
         }
         levelsRef.current.ai = Math.max(levelsRef.current.ai, 0.32);
         noteFollowUpAudioStarted();
+        restoreLiveVoice("assistant_audio");
+        interviewLog("ASSISTANT_RESPONSE_STARTED", {
+          interviewId: interviewIdRef.current,
+          connectionGeneration: generation,
+          responseId: lastResponseIdRef.current,
+        });
       });
       session.on("audio_stopped", () => {
+        if (!alive(generation)) return;
         levelsRef.current.ai *= 0.15;
         endAiSpeech();
+        interviewLog("ASSISTANT_RESPONSE_COMPLETED", {
+          interviewId: interviewIdRef.current,
+          connectionGeneration: generation,
+          responseId: lastResponseIdRef.current,
+        });
       });
       session.on("audio_interrupted", () => {
+        if (!alive(generation)) return;
         levelsRef.current.ai = 0;
-        beginAiSpeech();
-        clearInputAudio();
+        aiSpeakingRef.current = false;
+        responseInProgressRef.current = false;
+        setAiSpeaking(false);
+        interviewLog("ASSISTANT_RESPONSE_CANCELLED", {
+          interviewId: interviewIdRef.current,
+          connectionGeneration: generation,
+          responseId: lastResponseIdRef.current,
+        });
       });
       session.on("transport_event", (event) => {
+        if (!alive(generation)) return;
+        const eventType = typeof event.type === "string" ? event.type : "";
+        if (eventType === "error") {
+          lastRealtimeErrorRef.current = event;
+          if (isBenignRealtimeError(event)) {
+            interviewLog("TRANSPORT_ERROR_IGNORED", {
+              interviewId: interviewIdRef.current,
+              connectionGeneration: generation,
+              error: summarizeUnknownError(event),
+            });
+            restoreLiveVoice("benign_transport_error");
+            return;
+          }
+        }
+        if (
+          eventType === "error" ||
+          eventType === "session.created" ||
+          eventType === "session.updated" ||
+          eventType.endsWith(".failed") ||
+          eventType.includes("transcription.failed")
+        ) {
+          interviewLog("TRANSPORT_EVENT", {
+            interviewId: interviewIdRef.current,
+            connectionGeneration: generation,
+            type: eventType,
+            error: eventType === "error" ? summarizeUnknownError(event) : undefined,
+          });
+        }
         if (event.type === "response.created") {
+          const responseId = (event as { response?: { id?: string }; response_id?: string }).response?.id
+            ?? (event as { response_id?: string }).response_id
+            ?? null;
+          if (responseId && lastResponseIdRef.current === responseId) return;
+          lastResponseIdRef.current = responseId;
           beginAiSpeech();
         }
         if (event.type === "output_audio_buffer.started") {
           noteFollowUpAudioStarted();
         }
-        if (isToolActivityEvent(event)) {
-          holdAiTurn();
+        if (event.type === "response.done" || event.type === "response.cancelled") {
+          responseInProgressRef.current = false;
         }
-        const ignoreUserAudio =
-          !listeningOpenRef.current ||
-          aiSpeakingRef.current ||
-          pendingToolsRef.current > 0 ||
-          awaitingFollowUpRef.current ||
-          endingRef.current;
-        if (ignoreUserAudio) {
-          if (
-            event.type === "input_audio_buffer.speech_started" ||
-            event.type === "input_audio_buffer.speech_stopped" ||
-            event.type === "input_audio_buffer.committed"
-          ) {
+        if (event.type === "input_audio_buffer.speech_started") {
+          handleUserSpeechStarted();
+          return;
+        }
+        if (event.type === "input_audio_buffer.speech_stopped") {
+          handleUserSpeechStopped();
+          if (!listeningOpenRef.current || pendingToolsRef.current > 0 || endingRef.current) {
             clearInputAudio();
-            applyMicGate();
+            return;
+          }
+          interviewLog("USER_TURN_FINALIZED", {
+            interviewId: interviewIdRef.current,
+            connectionGeneration: generation,
+          });
+          return;
+        }
+        if (!listeningOpenRef.current || pendingToolsRef.current > 0 || endingRef.current) {
+          if (event.type === "input_audio_buffer.committed") {
+            clearInputAudio();
           }
           return;
         }
-        if (event.type === "input_audio_buffer.speech_started") {
-          levelsRef.current.user = Math.max(levelsRef.current.user, 0.26);
-        }
-        if (event.type === "input_audio_buffer.speech_stopped") {
-          levelsRef.current.user *= 0.12;
-        }
       });
       await session.connect({ apiKey: data.clientSecret });
+      interviewLog("SESSION_CONNECT_OK", {
+        interviewId: interviewIdRef.current,
+        connectionGeneration: generation,
+        processedMic: usedProcessedMic,
+      });
+      if (!alive(generation)) {
+        session.close();
+        micProcessingStopRef.current?.();
+        micProcessingStopRef.current = null;
+        mediaStream.getTracks().forEach((track) => track.stop());
+        void audioCtx.close();
+        return;
+      }
       sessionRef.current = session;
+      registerSessionClose(token, () => {
+        try {
+          session.close();
+        } catch {
+          // already closed
+        }
+      });
       session.mute(true);
       mediaStream.getAudioTracks().forEach((track) => {
         track.enabled = false;
       });
-      clearInputAudio();
-      if (reconnects.current === 0) {
+
+      for (const restored of restoredTurns) {
+        if (restored.role !== "user" && restored.role !== "assistant") continue;
+        try {
+          session.transport.sendEvent({
+            type: "conversation.item.create",
+            item: conversationItemFromTurn({ role: restored.role, content: restored.content }),
+          });
+        } catch {
+          // restore is best-effort
+        }
+      }
+
+      if (data.instructions && (data.continuation || !triggerOpening)) {
+        setVadAutoResponse(false, data.instructions);
+      }
+
+      if (!triggerOpening) {
+        try {
+          session.transport.sendEvent({
+            type: "conversation.item.create",
+            item: {
+              type: "message",
+              role: "system",
+              content: [{ type: "input_text", text: CONTINUE_RESPONSE_INSTRUCTIONS }],
+            },
+          });
+        } catch {
+          // ignore
+        }
+      }
+
+      if (triggerOpening) {
+        markOpeningTriggered(token);
+        persistRuntime({ openingDelivered: true, phase: "AWAITING_CONSENT", interviewStarted: true });
         beginAiSpeech();
-        const speakIn =
-          language === "en"
-            ? "English"
-            : "Eastern Armenian (արևելահայերեն) as spoken in Yerevan and the Republic of Armenia — not Western Armenian";
-        const greet = language === "en"
-          ? firstName
-            ? `Start with "Hello, ${firstName}".`
-            : "Greet them without using a name."
-          : firstName
-            ? `Start with "Բարև, ${firstName}".`
-            : "Greet them without using a name.";
         session.transport.sendEvent({
           type: "response.create",
-          response: {
-            instructions: `The respondent just enabled the microphone and is listening. Speak first now, in ${speakIn}. ${greet} Use the given name "${firstName}" if provided — never the word "անուն" or "name". Briefly introduce yourself as an AI interviewer, thank them, say you want to understand recurring time-consuming processes, it usually takes 15–20 minutes, then say: «Խնդրում եմ չկիսվել բիզնեսի գաղտնիքներով կամ հաճախորդների անձնական տվյալներով։ Կարող ե՞մ սկսենք հիմա։» Do not say this is a sales call or that it is not a sales call. Do not mention passwords or գաղտնաբառեր. A few short sentences only. Do not wait for them to speak.`,
-          },
+          response: { instructions: openingResponseInstructions({ language, firstName }) },
+        });
+        interviewLog("OPENING_TRIGGERED", {
+          interviewId: interviewIdRef.current,
+          connectionGeneration: generation,
         });
         introFallbackRef.current = window.setTimeout(() => {
-          if (!introPendingRef.current) return;
+          if (!alive(generation) || !introPendingRef.current) return;
+          interviewLog("OPENING_FALLBACK_LISTENING", {
+            interviewId: interviewIdRef.current,
+            connectionGeneration: generation,
+          });
           introPendingRef.current = false;
           aiSpeakingRef.current = false;
           setAiSpeaking(false);
           openListening();
         }, 8000);
       } else {
+        introPendingRef.current = false;
         openListening();
       }
 
       let raf = 0;
       const pump = () => {
+        if (!alive(generation)) return;
         const aiLevel = Math.min(1, readRms(outAnalyser, outBuffer) * 5.8);
         if (aiLevel > 0.06) beginAiSpeech();
-        else if (
-          aiLevel < 0.02 &&
-          !introPendingRef.current &&
-          pendingToolsRef.current === 0 &&
-          !awaitingFollowUpRef.current
-        ) {
+        else if (aiLevel < 0.02 && !introPendingRef.current && pendingToolsRef.current === 0) {
           endAiSpeech();
         }
         levelsRef.current = {
@@ -670,59 +1167,118 @@ export function InterviewClient({
         cancelAnimationFrame(raf);
         if (aiHoldTimerRef.current) window.clearTimeout(aiHoldTimerRef.current);
         if (introFallbackRef.current) window.clearTimeout(introFallbackRef.current);
-        if (followUpTimerRef.current) window.clearTimeout(followUpTimerRef.current);
-        awaitingFollowUpRef.current = false;
+        if (bargeInTimerRef.current) window.clearTimeout(bargeInTimerRef.current);
+        bargeInTimerRef.current = null;
+        speechStartedAtRef.current = null;
+        micProcessingStopRef.current?.();
+        micProcessingStopRef.current = null;
         pendingToolsRef.current = 0;
         listeningOpenRef.current = false;
         introPendingRef.current = false;
         setListeningOpen(false);
         mediaStream.getTracks().forEach((track) => track.stop());
+        sendStream.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
         void audioCtx.close();
       };
 
-      hadLiveSessionRef.current = true;
+      setHadLiveSession(true);
       setStatus("live");
     } catch (err) {
+      if (!alive(generation) && endingRef.current) return;
+      micProcessingStopRef.current?.();
+      micProcessingStopRef.current = null;
       mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
       mediaStreamRef.current = null;
       const name = err instanceof DOMException ? err.name : "";
       if (name === "NotAllowedError" || name === "PermissionDeniedError" || name === "SecurityError") {
+        interviewLog("MIC_DENIED", {
+          interviewId: interviewIdRef.current,
+          connectionGeneration: generation,
+          name,
+        });
         setMicDenied(true);
         setStatus("idle");
         setError("");
         return;
       }
       if (name === "NotFoundError" || name === "NotReadableError" || name === "OverconstrainedError") {
+        interviewLog("MIC_UNAVAILABLE", {
+          interviewId: interviewIdRef.current,
+          connectionGeneration: generation,
+          name,
+        });
         setMicUnavailable(true);
         setStatus("idle");
         setError("");
         return;
       }
+      interviewLog("CONNECT_FAILED", {
+        interviewId: interviewIdRef.current,
+        connectionGeneration: generation,
+        error: summarizeUnknownError(err),
+      });
       setError(err instanceof Error ? err.message : "Կապը չհաջողվեց");
       setStatus("error");
     } finally {
       connectingRef.current = false;
+      markConnecting(token, false);
     }
   }
 
   async function attemptReconnect() {
-    if (endingRef.current) return;
-    if (reconnects.current >= 1) {
+    if (endingRef.current || runtimeRef.current.completed) {
+      interviewLog("RECONNECT_SKIPPED", {
+        interviewId: interviewIdRef.current,
+        ending: endingRef.current,
+        completed: runtimeRef.current.completed,
+      });
+      return;
+    }
+    if (reconnects.current >= REALTIME_RECONNECT.maxAttempts) {
+      if (sessionRef.current) {
+        interviewLog("RECONNECT_EXHAUSTED_SESSION_ALIVE", {
+          interviewId: interviewIdRef.current,
+          attempts: reconnects.current,
+          connectionGeneration: generationRef.current,
+        });
+        restoreLiveVoice("reconnect_exhausted_but_alive");
+        return;
+      }
+      interviewLog("RECONNECT_EXHAUSTED", {
+        interviewId: interviewIdRef.current,
+        attempts: reconnects.current,
+        maxAttempts: REALTIME_RECONNECT.maxAttempts,
+        connectionGeneration: generationRef.current,
+      });
       setStatus("text");
       setError("Ձայնային կապը ընդհատվեց։ Կարող եք շարունակել տեքստով։");
       return;
     }
+    const attempt = reconnects.current;
     reconnects.current += 1;
+    const delay = Math.min(
+      REALTIME_RECONNECT.baseDelayMs * 2 ** attempt,
+      REALTIME_RECONNECT.maxDelayMs,
+    );
+    interviewLog("RECONNECT_SCHEDULED", {
+      interviewId: interviewIdRef.current,
+      attempt: reconnects.current,
+      delayMs: delay,
+      connectionGeneration: generationRef.current,
+    });
     sessionRef.current?.close();
     sessionRef.current = null;
     audioCleanupRef.current?.();
     audioCleanupRef.current = null;
+    await new Promise((resolve) => window.setTimeout(resolve, delay));
+    if (endingRef.current) return;
     await connectVoice();
   }
 
   async function acceptConsent() {
     await sessionAction(token, "consent");
+    persistRuntime({ consentReceived: true, phase: "AWAITING_CONSENT" });
     setConsented(true);
   }
 
@@ -739,7 +1295,8 @@ export function InterviewClient({
       persistTimerRef.current = null;
     }
     await sessionAction(token, "complete", { turns: historyTurns });
-    sessionRef.current?.close();
+    persistRuntime({ completed: true, phase: "COMPLETED" });
+    closeInterviewConnection(token);
     sessionRef.current = null;
     audioCleanupRef.current?.();
     audioCleanupRef.current = null;
@@ -786,12 +1343,12 @@ export function InterviewClient({
   }, [consented]);
 
   useEffect(() => {
+    cancelConnectionTeardown(token);
     return () => {
       if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
-      sessionRef.current?.close();
-      audioCleanupRef.current?.();
+      scheduleConnectionTeardown(token);
     };
-  }, []);
+  }, [token]);
 
   useEffect(() => {
     const el = scrollerRef.current;
@@ -852,7 +1409,7 @@ export function InterviewClient({
   const showMicGate =
     status === "idle" ||
     status === "error" ||
-    (status === "connecting" && !hadLiveSessionRef.current);
+    (status === "connecting" && !hadLiveSession);
 
   return (
     <div className="relative mx-auto flex h-dvh max-w-2xl flex-col overflow-hidden px-4 py-5 sm:px-6">

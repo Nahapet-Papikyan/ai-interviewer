@@ -1,4 +1,7 @@
-import { Reveal } from "@/components/landing/Reveal";
+"use client";
+
+import { motion, useReducedMotion } from "motion/react";
+import { Item, Reveal, Stagger, fadeUp } from "@/components/landing/motion";
 import { Section } from "@/components/landing/ui";
 
 const nodes = [
@@ -10,6 +13,8 @@ const nodes = [
 ] as const;
 
 export function AutomationPhilosophy() {
+  const reduce = useReducedMotion();
+
   return (
     <Section>
       <Reveal>
@@ -22,9 +27,9 @@ export function AutomationPhilosophy() {
             integrations, APIs, validation, AI reasoning, and human review.
           </p>
           <div className="mt-10 grid gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
-            <ol className="space-y-0">
+            <Stagger className="space-y-0" delay={0.08}>
               {nodes.map((node, index) => (
-                <li key={node.label} className="flex flex-col">
+                <Item key={node.label} variants={fadeUp} className="flex flex-col">
                   <div className="flex items-center gap-3">
                     <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold tracking-[0.12em] uppercase ${kindClass(node.kind)}`}>
                       {kindLabel(node.kind)}
@@ -36,19 +41,25 @@ export function AutomationPhilosophy() {
                       <span className="landing-packet" />
                     </span>
                   ) : null}
-                </li>
+                </Item>
               ))}
-              <li className="mt-2 grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-white/10 bg-ink-2 px-4 py-3">
+              <Item variants={fadeUp} className="mt-2 grid gap-3 sm:grid-cols-2">
+                <motion.div
+                  className="rounded-2xl border border-white/10 bg-ink-2 px-4 py-3"
+                  whileHover={reduce ? undefined : { y: -3 }}
+                >
                   <p className="text-[10px] font-semibold tracking-[0.14em] text-mist uppercase">No exception</p>
                   <p className="mt-1 text-sm text-cloud">ERP</p>
-                </div>
-                <div className="rounded-2xl border border-brand-3/40 bg-brand-3/10 px-4 py-3">
+                </motion.div>
+                <motion.div
+                  className="rounded-2xl border border-brand-3/40 bg-brand-3/10 px-4 py-3"
+                  whileHover={reduce ? undefined : { y: -3 }}
+                >
                   <p className="text-[10px] font-semibold tracking-[0.14em] text-brand-3 uppercase">Exception</p>
                   <p className="mt-1 text-sm text-cloud">Human review</p>
-                </div>
-              </li>
-            </ol>
+                </motion.div>
+              </Item>
+            </Stagger>
             <p className="max-w-md text-base leading-7 text-mist">
               People stay in control of exceptions and important decisions. Automation handles the
               repetitive work.

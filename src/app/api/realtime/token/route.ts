@@ -1,10 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { InterviewStatus } from "@prisma/client";
-import { buildInterviewerInstructions } from "@/lib/interview/context";
+import { prisma } from "@/lib/db/prisma";
+import { buildInterviewerInstructions, interviewerPromptMeta } from "@/lib/interview/context";
+import { interviewLog } from "@/lib/interview/logging";
+import { restoreWindow } from "@/lib/interview/messages";
+import { hydrateRuntimeState, shouldConnectRealtime } from "@/lib/interview/runtime-state";
 import { canTransition } from "@/lib/interview/status";
-import { findInterviewByToken, recordEvent, setStatus } from "@/lib/interview/session";
+import { findInterviewByToken, recordEvent, saveRuntimeState, setStatus } from "@/lib/interview/session";
 import { mintRealtimeClientSecret } from "@/lib/openai/realtime";
-import { realtimeModel, realtimeVoice } from "@/lib/openai/realtime-config";
+import {
+  REALTIME_TRANSCRIBE_LANGUAGE,
+  REALTIME_TRANSCRIBE_PROMPT,
+  realtimeModel,
+  realtimeVoice,
+} from "@/lib/openai/realtime-config";
 import { rateLimit } from "@/lib/rate-limit";
 import { INTERVIEWER_PROMPT_VERSION } from "@/lib/versions";
 
@@ -33,9 +42,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  if (["COMPLETED", "ANALYZING", "ANALYZED", "REVIEWED", "FOLLOW_UP_READY"].includes(interview.status)) {
+  if (!shouldConnectRealtime(interview.status)) {
     return NextResponse.json({ error: "Interview already finished" }, { status: 409 });
   }
+
+  const messages = await prisma.interviewMessage.findMany({
+    where: { interviewId: interview.id },
+    orderBy: { sequenceNo: "asc" },
+    select: { role: true, contentText: true, sequenceNo: true, providerEventId: true },
+  });
+  const runtimeState = hydrateRuntimeState(interview.state, messages);
+  const isReconnect = runtimeState.openingDelivered || messages.length > 0;
+  runtimeState.connectionGeneration += 1;
 
   const nextStatus =
     interview.status === InterviewStatus.CONSENTED || interview.status === InterviewStatus.OPENED
@@ -44,13 +62,27 @@ export async function POST(request: NextRequest) {
         ? InterviewStatus.STARTED
         : InterviewStatus.IN_PROGRESS;
 
-  if (canTransition(interview.status, nextStatus)) {
+  if (canTransition(interview.status, nextStatus) && interview.status !== nextStatus) {
     await setStatus(interview.id, nextStatus, {
       startedAt: interview.startedAt ?? new Date(),
+      promptVersion: INTERVIEWER_PROMPT_VERSION,
+    });
+  } else if (interview.promptVersion !== INTERVIEWER_PROMPT_VERSION) {
+    await prisma.interview.update({
+      where: { id: interview.id },
+      data: { promptVersion: INTERVIEWER_PROMPT_VERSION },
     });
   }
 
-  await recordEvent(interview.id, "session_started");
+  await saveRuntimeState(interview.id, {
+    interviewStarted: true,
+    connectionGeneration: runtimeState.connectionGeneration,
+    openingDelivered: runtimeState.openingDelivered,
+    consentReceived: runtimeState.consentReceived,
+    phase: runtimeState.phase,
+    completed: runtimeState.completed,
+    activeProcess: runtimeState.activeProcess,
+  });
 
   const instructions = buildInterviewerInstructions({
     respondentName: interview.contact.firstName,
@@ -60,7 +92,10 @@ export async function POST(request: NextRequest) {
     vertical: interview.company.vertical,
     verifiedFacts: asStringArray(interview.company.verifiedFacts),
     hypotheses: asStringArray(interview.company.hypotheses),
+    respondentNameHy: interview.contact.firstName,
+    runtimeState,
   });
+  const prompt = interviewerPromptMeta();
 
   const model = realtimeModel();
   const voice = realtimeVoice();
@@ -68,6 +103,25 @@ export async function POST(request: NextRequest) {
     instructions,
     model,
     voice,
+    createResponse: false,
+    transcribeLanguage: REALTIME_TRANSCRIBE_LANGUAGE,
+    transcribePrompt: REALTIME_TRANSCRIBE_PROMPT,
+  });
+
+  await recordEvent(interview.id, isReconnect ? "realtime_reconnected" : "realtime_connected", {
+    promptVersion: prompt.version,
+    promptHash: prompt.hash,
+    connectionGeneration: runtimeState.connectionGeneration,
+  });
+
+  interviewLog(isReconnect ? "REALTIME_RECONNECTED" : "REALTIME_CONNECTED", {
+    interviewId: interview.id,
+    promptVersion: prompt.version,
+    promptSource: prompt.source,
+    promptHash: prompt.hash,
+    connectionGeneration: runtimeState.connectionGeneration,
+    openingDelivered: runtimeState.openingDelivered,
+    phase: runtimeState.phase,
   });
 
   return NextResponse.json({
@@ -75,7 +129,21 @@ export async function POST(request: NextRequest) {
     instructions,
     model,
     voice,
-    promptVersion: INTERVIEWER_PROMPT_VERSION,
+    promptVersion: prompt.version,
+    promptSource: prompt.source,
+    promptHash: prompt.hash,
+    interviewId: interview.id,
+    continuation: isReconnect,
+    runtimeState,
+    recentTurns: restoreWindow(
+      messages
+        .filter((message) => message.role === "user" || message.role === "assistant")
+        .map((message) => ({
+          role: message.role as "user" | "assistant",
+          content: message.contentText,
+          providerEventId: message.providerEventId,
+        })),
+    ),
     interview: {
       id: interview.id,
       status: nextStatus,

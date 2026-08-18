@@ -1,12 +1,14 @@
 "use client";
 
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { useState } from "react";
 import { faqs } from "@/components/landing/content";
-import { Reveal } from "@/components/landing/Reveal";
+import { Reveal, easeOutExpo } from "@/components/landing/motion";
 import { Section } from "@/components/landing/ui";
 
 export function FAQ() {
   const [open, setOpen] = useState<number | null>(0);
+  const reduce = useReducedMotion();
 
   return (
     <Section>
@@ -26,12 +28,30 @@ export function FAQ() {
                   onClick={() => setOpen(expanded ? null : index)}
                 >
                   {item.q}
-                  <span aria-hidden className="text-mist">
-                    {expanded ? "–" : "+"}
-                  </span>
+                  <motion.span
+                    aria-hidden
+                    className="text-mist"
+                    animate={{ rotate: expanded ? 45 : 0 }}
+                    transition={{ duration: 0.22 }}
+                  >
+                    +
+                  </motion.span>
                 </button>
               </h3>
-              {expanded ? <p className="px-5 pb-5 text-sm leading-7 text-mist">{item.a}</p> : null}
+              <AnimatePresence initial={false}>
+                {expanded ? (
+                  <motion.div
+                    key="answer"
+                    initial={reduce ? false : { height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={reduce ? undefined : { height: 0, opacity: 0 }}
+                    transition={{ duration: 0.32, ease: easeOutExpo }}
+                    className="overflow-hidden"
+                  >
+                    <p className="px-5 pb-5 text-sm leading-7 text-mist">{item.a}</p>
+                  </motion.div>
+                ) : null}
+              </AnimatePresence>
             </div>
           );
         })}

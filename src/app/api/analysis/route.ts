@@ -12,7 +12,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "interviewId required" }, { status: 400 });
   }
   try {
-    await runInterviewAnalysis(interviewId);
+    await runInterviewAnalysis(interviewId, { force: true });
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json(

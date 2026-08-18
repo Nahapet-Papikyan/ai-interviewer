@@ -1,14 +1,46 @@
 import { InterviewStatus } from "@prisma/client";
 import Link from "next/link";
 import { prisma } from "@/lib/db/prisma";
+import { FunnelChart } from "@/components/admin/FunnelChart";
+import { AnalyzeInterviewButton } from "@/components/admin/InterviewControls";
+import {
+  DataTable,
+  EmptyState,
+  Eyebrow,
+  NameCell,
+  PageHeader,
+  ScoreBar,
+  StatCard,
+  StatusBadge,
+  TableAction,
+  TableHead,
+  TableRow,
+  Td,
+  Th,
+  Truncate,
+} from "@/components/admin/ui";
+
+const COMPLETED_STATUSES: InterviewStatus[] = [
+  InterviewStatus.COMPLETED,
+  InterviewStatus.ANALYZING,
+  InterviewStatus.ANALYZED,
+  InterviewStatus.REVIEWED,
+  InterviewStatus.FOLLOW_UP_READY,
+];
+
+const ANALYZED_STATUSES: InterviewStatus[] = [
+  InterviewStatus.ANALYZED,
+  InterviewStatus.REVIEWED,
+  InterviewStatus.FOLLOW_UP_READY,
+];
 
 export default async function DashboardPage() {
   const [invited, opened, started, completed, analyzed, interviews] = await Promise.all([
     prisma.interview.count(),
     prisma.interview.count({ where: { openedAt: { not: null } } }),
     prisma.interview.count({ where: { startedAt: { not: null } } }),
-    prisma.interview.count({ where: { status: { in: [InterviewStatus.COMPLETED, InterviewStatus.ANALYZING, InterviewStatus.ANALYZED, InterviewStatus.REVIEWED, InterviewStatus.FOLLOW_UP_READY] } } }),
-    prisma.interview.count({ where: { status: { in: [InterviewStatus.ANALYZED, InterviewStatus.REVIEWED, InterviewStatus.FOLLOW_UP_READY] } } }),
+    prisma.interview.count({ where: { status: { in: COMPLETED_STATUSES } } }),
+    prisma.interview.count({ where: { status: { in: ANALYZED_STATUSES } } }),
     prisma.interview.findMany({
       include: {
         company: true,
@@ -29,79 +61,101 @@ export default async function DashboardPage() {
   ).length;
   const completionRate = invited ? Math.round((completed / invited) * 100) : 0;
 
-  const cards = [
-    ["Invitations", invited],
-    ["Opened", opened],
-    ["Started", started],
-    ["Completed", completed],
-    ["Completion rate", `${completionRate}%`],
-    ["Analyzed", analyzed],
-    ["Strong opportunity", strong],
-    ["Pilot-ready", pilotReady],
-  ];
-
   return (
     <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-semibold">Overview</h1>
-        <p className="mt-1 text-sm text-zinc-500">Research funnel for the first 20–30 interviews.</p>
+      <PageHeader
+        eyebrow={<Eyebrow>Overview</Eyebrow>}
+        title="Research dashboard"
+        description="Funnel and recent interviews for the first 20–30 discovery conversations."
+      />
+
+      <FunnelChart
+        stages={[
+          { label: "Invited", value: invited },
+          { label: "Opened", value: opened },
+          { label: "Started", value: started },
+          { label: "Completed", value: completed },
+          { label: "Analyzed", value: analyzed },
+        ]}
+      />
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatCard label="Completion rate" value={`${completionRate}%`} hint="Completed of invited" />
+        <StatCard label="Analyzed" value={analyzed} hint="Scored against research criteria" />
+        <StatCard label="Strong opportunity" value={strong} hint="≥ 0.5 FTE or ≥ 500 tx / month" />
+        <StatCard label="Pilot-ready" value={pilotReady} hint="Willingness confirmed in recent set" />
       </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {cards.map(([label, value]) => (
-          <div key={label} className="card">
-            <div className="text-2xl font-semibold">{value}</div>
-            <div className="mt-1 text-sm text-zinc-500">{label}</div>
-          </div>
-        ))}
-      </div>
-      <section>
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-medium">Recent interviews</h2>
-          <Link href="/interviews" className="text-sm text-zinc-500 hover:text-zinc-900">
+
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-ink">Recent interviews</h2>
+          <Link href="/interviews" className="text-sm text-zinc-500 transition-colors hover:text-ink">
             View all
           </Link>
         </div>
-        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-zinc-50 text-zinc-500">
-              <tr>
-                <th className="px-4 py-2 font-medium">Company</th>
-                <th className="px-4 py-2 font-medium">Contact</th>
-                <th className="px-4 py-2 font-medium">Status</th>
-                <th className="px-4 py-2 font-medium">Turns</th>
-                <th className="px-4 py-2 font-medium">Best score</th>
-                <th className="px-4 py-2 font-medium"></th>
-              </tr>
-            </thead>
+        {interviews.length === 0 ? (
+          <EmptyState
+            title="No interviews yet"
+            description="Create a contact and send an invitation to start the research funnel."
+            action={
+              <Link href="/contacts" className="btn">
+                Go to contacts
+              </Link>
+            }
+          />
+        ) : (
+          <DataTable minWidth={840}>
+            <TableHead>
+              <Th>Company</Th>
+              <Th>Contact</Th>
+              <Th>Status</Th>
+              <Th>Turns</Th>
+              <Th>Best score</Th>
+              <Th className="text-right">Actions</Th>
+            </TableHead>
             <tbody>
               {interviews.map((interview) => {
                 const best = interview.processes
                   .map((p) => p.opportunity?.scoreTotal ?? p.automationScore ?? 0)
                   .reduce((a, b) => Math.max(a, b), 0);
+                const contactName = `${interview.contact.firstName} ${interview.contact.lastName ?? ""}`.trim();
                 return (
-                  <tr key={interview.id} className="border-t border-zinc-100">
-                    <td className="px-4 py-2">
-                      <Link href={`/interviews/${interview.id}`} className="hover:underline">
-                        {interview.company.name}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-2 text-zinc-600">
-                      {interview.contact.firstName} · {interview.contact.role}
-                    </td>
-                    <td className="px-4 py-2">{interview.status}</td>
-                    <td className="px-4 py-2">{interview._count.messages}</td>
-                    <td className="px-4 py-2">{best ? Math.round(best) : "—"}</td>
-                    <td className="px-4 py-2 text-right">
-                      <Link href={`/interviews/${interview.id}#transcript`} className="text-sm font-medium hover:underline">
-                        {interview._count.messages ? "Read chat" : "Open"}
-                      </Link>
-                    </td>
-                  </tr>
+                  <TableRow key={interview.id}>
+                    <Td>
+                      <NameCell href={`/interviews/${interview.id}`} name={interview.company.name} />
+                    </Td>
+                    <Td>
+                      <Truncate className="font-medium text-ink" title={contactName}>
+                        {contactName}
+                      </Truncate>
+                      <Truncate className="text-xs text-zinc-400" title={interview.contact.role}>
+                        {interview.contact.role}
+                      </Truncate>
+                    </Td>
+                    <Td className="whitespace-nowrap">
+                      <StatusBadge status={interview.status} />
+                    </Td>
+                    <Td className="tabular-nums whitespace-nowrap text-zinc-600">{interview._count.messages}</Td>
+                    <Td className="min-w-[120px]">{best ? <ScoreBar value={best} /> : <span className="text-zinc-300">—</span>}</Td>
+                    <Td className="whitespace-nowrap text-right">
+                      <div className="inline-flex items-center justify-end gap-2">
+                        <TableAction href={`/interviews/${interview.id}${interview._count.messages ? "#transcript" : ""}`}>
+                          {interview._count.messages ? "Read chat" : "Open"}
+                        </TableAction>
+                        <AnalyzeInterviewButton
+                          interviewId={interview.id}
+                          compact
+                          analyzed={interview.processes.length > 0}
+                          disabled={!interview._count.messages || interview.status === "ANALYZING"}
+                        />
+                      </div>
+                    </Td>
+                  </TableRow>
                 );
               })}
             </tbody>
-          </table>
-        </div>
+          </DataTable>
+        )}
       </section>
     </div>
   );

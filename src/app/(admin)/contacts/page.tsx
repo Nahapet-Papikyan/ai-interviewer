@@ -1,5 +1,18 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db/prisma";
+import {
+  DataTable,
+  EmptyState,
+  Eyebrow,
+  formatDate,
+  NameCell,
+  PageHeader,
+  TableHead,
+  TableRow,
+  Td,
+  Th,
+  Truncate,
+} from "@/components/admin/ui";
 
 export default async function ContactsPage() {
   const contacts = await prisma.contact.findMany({
@@ -9,38 +22,62 @@ export default async function ContactsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Contacts</h1>
-        <Link href="/contacts/new" className="btn">
-          New contact
-        </Link>
-      </div>
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-zinc-50 text-zinc-500">
-            <tr>
-              <th className="px-4 py-2 font-medium">Name</th>
-              <th className="px-4 py-2 font-medium">Role</th>
-              <th className="px-4 py-2 font-medium">Company</th>
-              <th className="px-4 py-2 font-medium">Interviews</th>
-            </tr>
-          </thead>
+      <PageHeader
+        eyebrow={<Eyebrow>Directory</Eyebrow>}
+        title="Contacts"
+        description="People invited into discovery interviews."
+        actions={
+          <Link href="/contacts/new" className="btn">
+            New contact
+          </Link>
+        }
+      />
+
+      {contacts.length === 0 ? (
+        <EmptyState
+          title="No contacts yet"
+          description="Add a contact under a company, then create an interview invitation."
+          action={
+            <Link href="/contacts/new" className="btn">
+              New contact
+            </Link>
+          }
+        />
+      ) : (
+        <DataTable>
+          <TableHead>
+            <Th>Name</Th>
+            <Th>Role</Th>
+            <Th>Company</Th>
+            <Th>Interviews</Th>
+            <Th>Added</Th>
+          </TableHead>
           <tbody>
-            {contacts.map((contact) => (
-              <tr key={contact.id} className="border-t border-zinc-100">
-                <td className="px-4 py-2">
-                  <Link href={`/contacts/${contact.id}`} className="hover:underline">
-                    {contact.firstName} {contact.lastName}
-                  </Link>
-                </td>
-                <td className="px-4 py-2 text-zinc-600">{contact.role}</td>
-                <td className="px-4 py-2">{contact.company.name}</td>
-                <td className="px-4 py-2">{contact._count.interviews}</td>
-              </tr>
-            ))}
+            {contacts.map((contact) => {
+              const name = `${contact.firstName} ${contact.lastName ?? ""}`.trim();
+              return (
+                <TableRow key={contact.id}>
+                  <Td>
+                    <NameCell href={`/contacts/${contact.id}`} name={name} />
+                  </Td>
+                  <Td>
+                    <Truncate className="text-zinc-600" title={contact.role}>
+                      {contact.role}
+                    </Truncate>
+                  </Td>
+                  <Td>
+                    <Link href={`/companies/${contact.company.id}`} className="block max-w-[180px] truncate hover:text-brand" title={contact.company.name}>
+                      {contact.company.name}
+                    </Link>
+                  </Td>
+                  <Td className="tabular-nums text-zinc-600">{contact._count.interviews}</Td>
+                  <Td className="text-zinc-500">{formatDate(contact.createdAt)}</Td>
+                </TableRow>
+              );
+            })}
           </tbody>
-        </table>
-      </div>
+        </DataTable>
+      )}
     </div>
   );
 }

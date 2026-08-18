@@ -1,10 +1,35 @@
 import { prisma } from "@/lib/db/prisma";
+import {
+  DataTable,
+  EmptyState,
+  Eyebrow,
+  PageHeader,
+  TableHead,
+  TableRow,
+  Td,
+  Th,
+  Truncate,
+} from "@/components/admin/ui";
 
 function median(values: number[]) {
   if (!values.length) return null;
   const sorted = values.slice().sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function ShareBar({ value, total }: { value: number; total: number }) {
+  const pct = total ? Math.round((value / total) * 100) : 0;
+  return (
+    <div className="flex min-w-[92px] items-center gap-2">
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-100">
+        <div className="h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
+      </div>
+      <span className="w-10 text-right text-xs tabular-nums text-zinc-500">
+        {value}/{total}
+      </span>
+    </div>
+  );
 }
 
 export default async function ProcessExplorerPage() {
@@ -16,10 +41,7 @@ export default async function ProcessExplorerPage() {
     },
   });
 
-  const clusters = new Map<
-    string,
-    typeof processes
-  >();
+  const clusters = new Map<string, typeof processes>();
   for (const process of processes) {
     const key = process.clusterTag || process.name;
     const list = clusters.get(key) ?? [];
@@ -36,12 +58,8 @@ export default async function ProcessExplorerPage() {
       const hours = items
         .map((p) => p.manualHoursMonthMax ?? p.manualHoursMonthMin)
         .filter((v): v is number => typeof v === "number");
-      const with1c = items.filter((p) =>
-        p.systems.some((s) => s.name.toLowerCase().includes("1c")),
-      ).length;
-      const withExcel = items.filter((p) =>
-        p.systems.some((s) => /excel|sheets/i.test(s.name)),
-      ).length;
+      const with1c = items.filter((p) => p.systems.some((s) => s.name.toLowerCase().includes("1c"))).length;
+      const withExcel = items.filter((p) => p.systems.some((s) => /excel|sheets/i.test(s.name))).length;
       const pilotReady = items.filter((p) => p.opportunity?.pilotReadiness === "YES").length;
       return {
         name,
@@ -56,48 +74,71 @@ export default async function ProcessExplorerPage() {
     })
     .sort((a, b) => b.companies - a.companies);
 
+  const maxCompanies = Math.max(...rows.map((r) => r.companies), 1);
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Process Explorer</h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          Repeatability across companies — the strategic screen. Cluster tags come from analyzer output and can be corrected later.
-        </p>
-      </div>
-      <div className="overflow-x-auto rounded-xl border border-zinc-200 bg-white">
-        <table className="w-full min-w-[800px] text-left text-sm">
-          <thead className="bg-zinc-50 text-zinc-500">
-            <tr>
-              <th className="px-4 py-2 font-medium">Cluster</th>
-              <th className="px-4 py-2 font-medium">Companies</th>
-              <th className="px-4 py-2 font-medium">Median tx/month</th>
-              <th className="px-4 py-2 font-medium">Median hours/month</th>
-              <th className="px-4 py-2 font-medium">1C</th>
-              <th className="px-4 py-2 font-medium">Excel</th>
-              <th className="px-4 py-2 font-medium">Pilot-ready</th>
-            </tr>
-          </thead>
+      <PageHeader
+        eyebrow={<Eyebrow>Research</Eyebrow>}
+        title="Process explorer"
+        description="Repeatability across companies — the strategic screen. Cluster tags come from analyzer output and can be corrected later."
+      />
+
+      {rows.length === 0 ? (
+        <EmptyState
+          title="No processes extracted yet"
+          description="Run analysis on a completed interview to cluster processes across companies."
+        />
+      ) : (
+        <DataTable minWidth={860}>
+          <TableHead>
+            <Th>Cluster</Th>
+            <Th>Companies</Th>
+            <Th>Median tx/month</Th>
+            <Th>Median hours/month</Th>
+            <Th>1C</Th>
+            <Th>Excel</Th>
+            <Th>Pilot-ready</Th>
+          </TableHead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.name} className="border-t border-zinc-100">
-                <td className="px-4 py-2 font-medium">{row.name}</td>
-                <td className="px-4 py-2">{row.companies}</td>
-                <td className="px-4 py-2">{row.medianTx != null ? Math.round(row.medianTx) : "—"}</td>
-                <td className="px-4 py-2">{row.medianHours != null ? Math.round(row.medianHours) : "—"}</td>
-                <td className="px-4 py-2">
-                  {row.with1c}/{row.total}
-                </td>
-                <td className="px-4 py-2">
-                  {row.withExcel}/{row.total}
-                </td>
-                <td className="px-4 py-2">
-                  {row.pilotReady}/{row.total}
-                </td>
-              </tr>
+              <TableRow key={row.name}>
+                <Td>
+                  <Truncate className="font-medium" title={row.name}>
+                    {row.name}
+                  </Truncate>
+                </Td>
+                <Td>
+                  <div className="flex min-w-[120px] items-center gap-2">
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-100">
+                      <div
+                        className="h-full rounded-full bg-ink"
+                        style={{ width: `${(row.companies / maxCompanies) * 100}%` }}
+                      />
+                    </div>
+                    <span className="w-5 text-right tabular-nums text-zinc-600">{row.companies}</span>
+                  </div>
+                </Td>
+                <Td className="tabular-nums text-zinc-600">
+                  {row.medianTx != null ? Math.round(row.medianTx).toLocaleString() : "—"}
+                </Td>
+                <Td className="tabular-nums text-zinc-600">
+                  {row.medianHours != null ? Math.round(row.medianHours) : "—"}
+                </Td>
+                <Td>
+                  <ShareBar value={row.with1c} total={row.total} />
+                </Td>
+                <Td>
+                  <ShareBar value={row.withExcel} total={row.total} />
+                </Td>
+                <Td>
+                  <ShareBar value={row.pilotReady} total={row.total} />
+                </Td>
+              </TableRow>
             ))}
           </tbody>
-        </table>
-      </div>
+        </DataTable>
+      )}
     </div>
   );
 }

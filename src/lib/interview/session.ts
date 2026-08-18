@@ -1,6 +1,12 @@
 import { prisma } from "@/lib/db/prisma";
 import { hashToken } from "@/lib/tokens";
-import { InterviewStatus } from "@prisma/client";
+import {
+  hydrateRuntimeState,
+  mergeRuntimeState,
+  parseRuntimeState,
+  type InterviewRuntimeState,
+} from "@/lib/interview/runtime-state";
+import { InterviewStatus, Prisma } from "@prisma/client";
 
 export async function findInterviewByToken(token: string) {
   const publicTokenHash = hashToken(token);
@@ -32,4 +38,38 @@ export async function setStatus(interviewId: string, status: InterviewStatus, ex
     where: { id: interviewId },
     data: { status, ...extra },
   });
+}
+
+export async function loadRuntimeState(interviewId: string): Promise<InterviewRuntimeState> {
+  const interview = await prisma.interview.findUnique({
+    where: { id: interviewId },
+    select: {
+      state: true,
+      status: true,
+      messages: { select: { role: true, contentText: true }, orderBy: { sequenceNo: "asc" } },
+    },
+  });
+  if (!interview) return hydrateRuntimeState(null);
+  const state = hydrateRuntimeState(interview.state, interview.messages);
+  if (["COMPLETED", "ANALYZING", "ANALYZED", "REVIEWED", "FOLLOW_UP_READY"].includes(interview.status)) {
+    state.completed = true;
+    state.phase = "COMPLETED";
+  }
+  return state;
+}
+
+export async function saveRuntimeState(
+  interviewId: string,
+  patch: Partial<InterviewRuntimeState>,
+): Promise<InterviewRuntimeState> {
+  const interview = await prisma.interview.findUnique({
+    where: { id: interviewId },
+    select: { state: true },
+  });
+  const next = mergeRuntimeState(parseRuntimeState(interview?.state), patch);
+  await prisma.interview.update({
+    where: { id: interviewId },
+    data: { state: next as Prisma.InputJsonValue },
+  });
+  return next;
 }

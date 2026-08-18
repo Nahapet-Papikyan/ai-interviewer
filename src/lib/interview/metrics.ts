@@ -32,7 +32,17 @@ export function deriveMonthlyTransactions(input: {
   perMonthMax?: number | null;
   weeklyMin?: number | null;
   weeklyMax?: number | null;
+  reliable?: boolean;
 }) {
+  if (input.reliable === false) {
+    return {
+      min: null,
+      max: null,
+      pointEstimate: null,
+      assumptions: ["source volume was not confirmed"],
+      basis: "UNKNOWN" as const,
+    };
+  }
   const assumptions: string[] = [];
   if (input.perMonthMin != null || input.perMonthMax != null) {
     return {
@@ -75,7 +85,18 @@ export function deriveLabor(input: {
   minutesPerTransactionMax?: number | null;
   manualHoursMonthMin?: number | null;
   manualHoursMonthMax?: number | null;
+  reliable?: boolean;
+  contradictory?: boolean;
 }) {
+  if (input.reliable === false || input.contradictory) {
+    return {
+      hours: { min: null, max: null, pointEstimate: null },
+      fte: { min: null, max: null, pointEstimate: null },
+      assumptions: input.contradictory
+        ? ["labor inputs contradict each other; numeric derivation skipped"]
+        : ["source labor/volume was not confirmed; numeric derivation skipped"],
+    };
+  }
   const assumptions: string[] = [];
   let hours = rangeFromMinMax(input.manualHoursMonthMin, input.manualHoursMonthMax);
   if (hours.min == null && hours.max == null) {

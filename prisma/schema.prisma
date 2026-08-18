@@ -41,6 +41,12 @@ enum EvidenceType {
   DERIVED
 }
 
+enum FactStatus {
+  CONFIRMED
+  UNCERTAIN
+  INFERRED
+}
+
 model Company {
   id            String   @id @default(uuid()) @db.Uuid
   name          String
@@ -81,7 +87,7 @@ model Interview {
   publicTokenHash String          @unique
   status          InterviewStatus @default(INVITED)
   language        String          @default("hy")
-  promptVersion   String          @default("interviewer-v1")
+  promptVersion   String          @default("interviewer-v2")
   analysisVersion String?
   schemaVersion   String?
   openedAt        DateTime?
@@ -103,20 +109,22 @@ model Interview {
 }
 
 model InterviewMessage {
-  id          String        @id @default(uuid()) @db.Uuid
-  interviewId String        @db.Uuid
-  sequenceNo  Int
-  role        MessageRole
-  contentText String
-  source      MessageSource @default(realtime)
-  startedAt   DateTime?
-  endedAt     DateTime?
-  createdAt   DateTime      @default(now())
+  id              String        @id @default(uuid()) @db.Uuid
+  interviewId     String        @db.Uuid
+  sequenceNo      Int
+  role            MessageRole
+  contentText     String
+  source          MessageSource @default(realtime)
+  providerEventId String?
+  startedAt       DateTime?
+  endedAt         DateTime?
+  createdAt       DateTime      @default(now())
 
   interview Interview         @relation(fields: [interviewId], references: [id], onDelete: Cascade)
   evidence  ProcessEvidence[]
 
   @@unique([interviewId, sequenceNo])
+  @@index([interviewId, providerEventId])
 }
 
 model InterviewEvent {
@@ -130,13 +138,17 @@ model InterviewEvent {
 }
 
 model InterviewFact {
-  id              String   @id @default(uuid()) @db.Uuid
-  interviewId     String   @db.Uuid
+  id              String     @id @default(uuid()) @db.Uuid
+  interviewId     String     @db.Uuid
   category        String
   value           String
   processName     String?
   evidenceSummary String?
-  createdAt       DateTime @default(now())
+  status          FactStatus @default(CONFIRMED)
+  confidence      Float?
+  rawTranscript   String?
+  sourceRole      String     @default("user")
+  createdAt       DateTime   @default(now())
 
   interview Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
 }

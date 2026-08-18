@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
 import { rateLimit } from "@/lib/rate-limit";
 import { generatePublicToken, hashToken } from "@/lib/tokens";
+import { INTERVIEWER_PROMPT_VERSION } from "@/lib/versions";
 
 const schema = z.object({
   firstName: z.string().trim().min(1).max(80),
@@ -52,6 +53,7 @@ export async function POST(request: NextRequest) {
         contactId: contact.id,
         publicTokenHash: hashToken(token),
         language,
+        promptVersion: INTERVIEWER_PROMPT_VERSION,
       },
     });
   });

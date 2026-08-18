@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { generatePublicToken, hashToken } from "@/lib/tokens";
+import { INTERVIEWER_PROMPT_VERSION } from "@/lib/versions";
 
 export type InvitationInput = {
   firstName: string;
@@ -111,6 +112,7 @@ export async function createInterviewInvitation(input: InvitationInput) {
         contactId: contact.id,
         publicTokenHash: hashToken(token),
         language,
+        promptVersion: INTERVIEWER_PROMPT_VERSION,
       },
     });
 

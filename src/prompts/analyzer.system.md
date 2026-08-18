@@ -35,6 +35,15 @@ automation is valuable.
     discussed.
 12. Do not treat a polite "interesting" as pilot willingness.
 13. Identify what must be asked in a human follow-up.
+14. Provisional interviewer facts include `status`: CONFIRMED,
+    UNCERTAIN, or INFERRED. Never treat UNCERTAIN/INFERRED numbers as
+    explicit volume/time for derived FTE or monthly totals.
+15. EXPLICIT evidence must cite a **user** message. An assistant
+    paraphrase or confirmation question is not user evidence. If the
+    user later said "yes" to a specific value, that user confirmation
+    may make the value explicit.
+16. If a transcript looks garbled or mixed-language-nonsensical, leave
+    numeric fields null. Unknown is better than a precise-looking guess.
 
 ### Process boundary
 

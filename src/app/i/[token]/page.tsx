@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { BrandLogo } from "@/components/brand/Logo";
 import { InterviewClient } from "@/components/interview/InterviewClient";
 import { findInterviewByToken, recordEvent, setStatus } from "@/lib/interview/session";
+import { hydrateRuntimeState } from "@/lib/interview/runtime-state";
 import { prisma } from "@/lib/db/prisma";
 
 export const dynamic = "force-dynamic";
@@ -43,14 +44,18 @@ export default async function PublicInterviewPage({
   return (
     <InterviewClient
       token={token}
+      interviewId={interview.id}
       firstName={interview.contact.firstName}
       companyName={interview.company.name}
       role={interview.contact.role}
       alreadyConsented={Boolean(interview.consentedAt)}
       language={interview.language}
+      interviewStatus={interview.status}
+      initialRuntime={hydrateRuntimeState(interview.state, messages)}
       existingTurns={messages.map((m) => ({
         role: m.role === "assistant" || m.role === "user" ? m.role : "user",
         content: m.contentText,
+        providerEventId: m.providerEventId,
       }))}
     />
   );

@@ -2,20 +2,59 @@ import { EvidenceType, InterviewStatus } from "@prisma/client";
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { prisma } from "@/lib/db/prisma";
+import { isReliableNumericSource, laborLooksContradictory } from "@/lib/interview/facts";
 import { getAnalyzerPrompt } from "@/lib/interview/context";
+import { interviewLog } from "@/lib/interview/logging";
 import { deriveLabor, deriveMonthlyTransactions } from "@/lib/interview/metrics";
+import { isAnalysisRunningOrDone, shouldStartAnalysis } from "@/lib/interview/runtime-state";
 import { totalFromBreakdown } from "@/lib/interview/scoring";
-import { InterviewAnalysisSchema } from "@/lib/openai/schemas";
+import { InterviewAnalysisSchema, type InterviewAnalysis } from "@/lib/openai/schemas";
 import {
   ANALYZER_PROMPT_VERSION,
   ANALYSIS_SCHEMA_VERSION,
+  WEEKS_PER_MONTH,
 } from "@/lib/versions";
 
 function asEvidenceType(value: "EXPLICIT" | "INFERRED" | "DERIVED"): EvidenceType {
   return value;
 }
 
-export async function runInterviewAnalysis(interviewId: string) {
+function volumeIsReliable(
+  process: InterviewAnalysis["processes"][number],
+  messagesBySeq: Map<number, { role: string }>,
+) {
+  if (process.volume.basis === "UNKNOWN") return false;
+  const related = process.evidence.filter((ev) =>
+    /volume|perDay|perMonth|transaction/i.test(ev.field),
+  );
+  if (related.length === 0) return process.volume.basis === "EXPLICIT";
+  return related.every((ev) =>
+    isReliableNumericSource({
+      evidenceType: ev.type,
+      confidence: ev.confidence,
+      sourceRole: messagesBySeq.get(ev.messageSequence)?.role,
+    }),
+  );
+}
+
+function laborIsReliable(
+  process: InterviewAnalysis["processes"][number],
+  messagesBySeq: Map<number, { role: string }>,
+) {
+  const related = process.evidence.filter((ev) =>
+    /labor|minute|hour|people|fte|time/i.test(ev.field),
+  );
+  if (related.length === 0) return false;
+  return related.every((ev) =>
+    isReliableNumericSource({
+      evidenceType: ev.type,
+      confidence: ev.confidence,
+      sourceRole: messagesBySeq.get(ev.messageSequence)?.role,
+    }),
+  );
+}
+
+export async function runInterviewAnalysis(interviewId: string, options?: { force?: boolean }) {
   const interview = await prisma.interview.findUnique({
     where: { id: interviewId },
     include: {
@@ -27,11 +66,43 @@ export async function runInterviewAnalysis(interviewId: string) {
   });
 
   if (!interview) throw new Error("Interview not found");
+  if (interview.messages.length === 0) throw new Error("No transcript to analyze");
 
-  await prisma.interview.update({
-    where: { id: interviewId },
+  if (!options?.force && isAnalysisRunningOrDone(interview.status)) {
+    interviewLog("ANALYSIS_STARTED", { interviewId, skipped: true, status: interview.status });
+    return null;
+  }
+
+  if (!shouldStartAnalysis(interview.status, options?.force) && interview.status !== InterviewStatus.ANALYZING) {
+    throw new Error(`Interview is not ready for analysis (${interview.status})`);
+  }
+
+  const claimed = await prisma.interview.updateMany({
+    where: {
+      id: interviewId,
+      status: options?.force
+        ? {
+            in: [
+              InterviewStatus.COMPLETED,
+              InterviewStatus.FAILED,
+              InterviewStatus.ABANDONED,
+              InterviewStatus.STARTED,
+              InterviewStatus.IN_PROGRESS,
+              InterviewStatus.ANALYZED,
+              InterviewStatus.REVIEWED,
+              InterviewStatus.FOLLOW_UP_READY,
+              InterviewStatus.ANALYZING,
+            ],
+          }
+        : { in: [InterviewStatus.COMPLETED, InterviewStatus.FAILED] },
+    },
     data: { status: InterviewStatus.ANALYZING },
   });
+  if (claimed.count === 0 && interview.status !== InterviewStatus.ANALYZING) {
+    return null;
+  }
+
+  interviewLog("ANALYSIS_STARTED", { interviewId, force: Boolean(options?.force) });
 
   const transcript = interview.messages
     .map((m) => `[${m.sequenceNo}] ${m.role.toUpperCase()}: ${m.contentText}`)
@@ -48,7 +119,16 @@ export async function runInterviewAnalysis(interviewId: string) {
       name: `${interview.contact.firstName} ${interview.contact.lastName ?? ""}`.trim(),
       role: interview.contact.role,
     },
-    provisionalFacts: interview.facts,
+    provisionalFacts: interview.facts.map((fact) => ({
+      category: fact.category,
+      value: fact.value,
+      processName: fact.processName,
+      evidenceSummary: fact.evidenceSummary,
+      status: fact.status,
+      confidence: fact.confidence,
+      sourceRole: fact.sourceRole,
+      rawTranscript: fact.rawTranscript,
+    })),
     transcript,
   };
 
@@ -89,14 +169,26 @@ export async function runInterviewAnalysis(interviewId: string) {
         },
       });
 
-      const messagesBySeq = new Map(interview.messages.map((m) => [m.sequenceNo, m.id]));
+      const messagesBySeq = new Map(interview.messages.map((m) => [m.sequenceNo, m]));
 
       for (const process of parsed.processes) {
+        const reliableVolume = volumeIsReliable(process, messagesBySeq);
+        const reliableLabor = laborIsReliable(process, messagesBySeq);
         const monthly = deriveMonthlyTransactions({
           perDayMin: process.volume.perDayMin,
           perDayMax: process.volume.perDayMax,
           perMonthMin: process.volume.perMonthMin,
           perMonthMax: process.volume.perMonthMax,
+          reliable: reliableVolume,
+        });
+        const weeklyVolume =
+          monthly.pointEstimate != null ? monthly.pointEstimate / WEEKS_PER_MONTH : null;
+        const minutes =
+          process.labor.minutesPerTransactionMin ?? process.labor.minutesPerTransactionMax ?? null;
+        const contradictory = laborLooksContradictory({
+          weeklyVolume,
+          minutesEach: minutes,
+          people: process.labor.peopleInvolved,
         });
         const labor = deriveLabor({
           monthlyTransactionsMin: monthly.min,
@@ -105,6 +197,8 @@ export async function runInterviewAnalysis(interviewId: string) {
           minutesPerTransactionMax: process.labor.minutesPerTransactionMax,
           manualHoursMonthMin: process.labor.manualHoursMonthMin,
           manualHoursMonthMax: process.labor.manualHoursMonthMax,
+          reliable: reliableVolume && reliableLabor,
+          contradictory,
         });
 
         const breakdown = {
@@ -157,13 +251,18 @@ export async function runInterviewAnalysis(interviewId: string) {
               })),
             },
             evidence: {
-              create: process.evidence.map((ev) => ({
-                fieldName: ev.field,
-                evidenceText: ev.excerpt,
-                evidenceType: asEvidenceType(ev.type),
-                confidence: ev.confidence,
-                messageId: messagesBySeq.get(ev.messageSequence) ?? null,
-              })),
+              create: process.evidence.map((ev) => {
+                const message = messagesBySeq.get(ev.messageSequence);
+                const evidenceType =
+                  ev.type === "EXPLICIT" && message?.role === "assistant" ? "INFERRED" : ev.type;
+                return {
+                  fieldName: ev.field,
+                  evidenceText: ev.excerpt,
+                  evidenceType: asEvidenceType(evidenceType),
+                  confidence: ev.confidence,
+                  messageId: message?.id ?? null,
+                };
+              }),
             },
             opportunity: {
               create: {

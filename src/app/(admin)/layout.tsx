@@ -1,4 +1,4 @@
-import { AdminNav } from "@/components/admin/Nav";
+import { AdminSidebar } from "@/components/admin/Sidebar";
 import type { Metadata } from "next";
 
 export const dynamic = "force-dynamic";
@@ -9,9 +9,11 @@ export const metadata: Metadata = {
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-zinc-50 text-zinc-950">
-      <AdminNav />
-      <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
+    <div className="admin min-h-screen">
+      <AdminSidebar />
+      <div className="lg:pl-[260px]">
+        <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-10 lg:py-8">{children}</main>
+      </div>
     </div>
   );
 }

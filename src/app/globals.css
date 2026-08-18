@@ -44,14 +44,20 @@ input, textarea, select, button {
   padding: 0.5rem 0.7rem;
 }
 
-.btn {
+.btn,
+.btn-secondary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  height: 2.5rem;
+  padding: 0 1.1rem;
   border-radius: 0.5rem;
-  padding: 0.5rem 0.85rem;
   font-size: 0.875rem;
   font-weight: 500;
+  white-space: nowrap;
+}
+
+.btn {
   background: #18181b;
   color: white;
 }
@@ -67,6 +73,110 @@ input, textarea, select, button {
   border: 1px solid #e4e4e7;
   border-radius: 0.75rem;
   padding: 1rem;
+}
+
+.admin {
+  color: var(--color-ink);
+  background: #f4f6fa;
+}
+
+.admin .btn,
+.admin .btn-secondary {
+  height: 2.5rem;
+  border-radius: 9999px;
+  padding: 0 1.1rem;
+}
+
+.admin .btn {
+  background: var(--color-brand);
+  color: white;
+  box-shadow: 0 0 0 1px rgb(22 135 248 / 0.35), 0 8px 20px rgb(22 135 248 / 0.14);
+}
+
+.admin .btn:hover {
+  background: #3b9bff;
+}
+
+.admin .btn:disabled {
+  opacity: 0.6;
+  box-shadow: none;
+}
+
+.admin .btn-secondary {
+  background: white;
+  color: var(--color-ink);
+  border: 1px solid rgb(7 10 18 / 0.1);
+  box-shadow: none;
+}
+
+.admin .btn-secondary:hover {
+  background: #f8fafc;
+}
+
+.admin .card {
+  border-radius: 1rem;
+  border-color: rgb(7 10 18 / 0.08);
+  box-shadow: 0 1px 2px rgb(7 10 18 / 0.04);
+  padding: 1.15rem 1.2rem;
+}
+
+.admin .field label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #52525b;
+}
+
+.admin .field input,
+.admin .field textarea,
+.admin .field select {
+  height: 2.5rem;
+  border: 1px solid rgb(7 10 18 / 0.1);
+  border-radius: 0.75rem;
+  padding: 0 0.8rem;
+  background: white;
+}
+
+.admin .field textarea {
+  height: auto;
+  padding: 0.55rem 0.8rem;
+}
+
+.admin .field input:focus,
+.admin .field textarea:focus,
+.admin .field select:focus {
+  outline: 2px solid rgb(22 135 248 / 0.28);
+  outline-offset: 1px;
+  border-color: var(--color-brand);
+}
+
+.admin a:focus-visible,
+.admin button:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 3px;
+}
+
+.admin textarea:not([class]) {
+  width: 100%;
+  border: 1px solid rgb(7 10 18 / 0.1);
+  border-radius: 0.75rem;
+  padding: 0.55rem 0.8rem;
+  background: white;
+}
+
+.landing .field label {
+  color: var(--color-mist);
+}
+
+.landing .field input {
+  background: rgb(255 255 255 / 0.05);
+  border-color: rgb(255 255 255 / 0.12);
+  color: var(--color-cloud);
+}
+
+.landing .field input:focus {
+  outline: 2px solid rgb(22 135 248 / 0.45);
+  outline-offset: 1px;
+  border-color: var(--color-brand);
 }
 
 @keyframes voice-dot {

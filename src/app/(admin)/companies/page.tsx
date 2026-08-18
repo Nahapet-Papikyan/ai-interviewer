@@ -1,5 +1,18 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db/prisma";
+import {
+  DataTable,
+  EmptyState,
+  Eyebrow,
+  formatDate,
+  NameCell,
+  PageHeader,
+  TableHead,
+  TableRow,
+  Td,
+  Th,
+  Truncate,
+} from "@/components/admin/ui";
 
 export default async function CompaniesPage() {
   const companies = await prisma.company.findMany({
@@ -9,38 +22,55 @@ export default async function CompaniesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Companies</h1>
-        <Link href="/companies/new" className="btn">
-          New company
-        </Link>
-      </div>
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-zinc-50 text-zinc-500">
-            <tr>
-              <th className="px-4 py-2 font-medium">Name</th>
-              <th className="px-4 py-2 font-medium">Vertical</th>
-              <th className="px-4 py-2 font-medium">Contacts</th>
-              <th className="px-4 py-2 font-medium">Interviews</th>
-            </tr>
-          </thead>
+      <PageHeader
+        eyebrow={<Eyebrow>Directory</Eyebrow>}
+        title="Companies"
+        description="Organizations in the discovery pipeline."
+        actions={
+          <Link href="/companies/new" className="btn">
+            New company
+          </Link>
+        }
+      />
+
+      {companies.length === 0 ? (
+        <EmptyState
+          title="No companies yet"
+          description="Add a company to start inviting contacts."
+          action={
+            <Link href="/companies/new" className="btn">
+              New company
+            </Link>
+          }
+        />
+      ) : (
+        <DataTable>
+          <TableHead>
+            <Th>Name</Th>
+            <Th>Vertical</Th>
+            <Th>Contacts</Th>
+            <Th>Interviews</Th>
+            <Th>Added</Th>
+          </TableHead>
           <tbody>
             {companies.map((company) => (
-              <tr key={company.id} className="border-t border-zinc-100">
-                <td className="px-4 py-2">
-                  <Link href={`/companies/${company.id}`} className="hover:underline">
-                    {company.name}
-                  </Link>
-                </td>
-                <td className="px-4 py-2 text-zinc-600">{company.vertical}</td>
-                <td className="px-4 py-2">{company._count.contacts}</td>
-                <td className="px-4 py-2">{company._count.interviews}</td>
-              </tr>
+              <TableRow key={company.id}>
+                <Td>
+                  <NameCell href={`/companies/${company.id}`} name={company.name} />
+                </Td>
+                <Td>
+                  <Truncate className="text-zinc-600" title={company.vertical}>
+                    {company.vertical}
+                  </Truncate>
+                </Td>
+                <Td className="tabular-nums text-zinc-600">{company._count.contacts}</Td>
+                <Td className="tabular-nums text-zinc-600">{company._count.interviews}</Td>
+                <Td className="text-zinc-500">{formatDate(company.createdAt)}</Td>
+              </TableRow>
             ))}
           </tbody>
-        </table>
-      </div>
+        </DataTable>
+      )}
     </div>
   );
 }

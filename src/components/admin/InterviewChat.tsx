@@ -15,26 +15,37 @@ type Props = {
 function roleLabel(role: MessageRole, respondentName: string) {
   if (role === "user") return respondentName;
   if (role === "assistant") return "Interviewer";
+  if (role === "system") return "System";
   return role;
 }
 
 export function InterviewChat({ messages, respondentName }: Props) {
   if (messages.length === 0) {
     return (
-      <div id="transcript" className="card">
+      <section id="transcript" className="card">
         <h2 className="font-medium">Conversation</h2>
         <p className="mt-3 text-sm text-zinc-500">No transcript yet for this interview.</p>
-      </div>
+      </section>
     );
   }
 
   return (
-    <section id="transcript" className="card flex min-h-0 flex-col p-0">
-      <div className="flex items-center justify-between border-b border-zinc-200 px-4 py-3">
-        <h2 className="font-medium">Conversation</h2>
-        <p className="text-xs text-zinc-500">{messages.length} turns</p>
+    <section id="transcript" className="card flex min-h-0 flex-col overflow-hidden p-0">
+      <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3.5">
+        <div>
+          <h2 className="text-sm font-semibold text-ink">Conversation</h2>
+          <p className="text-[11px] text-zinc-400">{messages.length} turns</p>
+        </div>
+        <div className="flex items-center gap-3 text-[11px] text-zinc-400">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-brand" /> Interviewer
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-ink" /> {respondentName}
+          </span>
+        </div>
       </div>
-      <div className="max-h-[70vh] space-y-3 overflow-y-auto px-4 py-4">
+      <div className="max-h-[min(78vh,840px)] space-y-4 overflow-y-auto bg-[#f7f9fc] px-4 py-5 sm:px-6">
         {messages.map((message) => {
           const isUser = message.role === "user";
           const isAssistant = message.role === "assistant";
@@ -42,22 +53,20 @@ export function InterviewChat({ messages, respondentName }: Props) {
             <div
               key={message.id}
               id={`m-${message.sequenceNo}`}
-              className={`scroll-mt-24 rounded-xl px-1 py-1 target:bg-amber-50 ${
-                isUser ? "flex justify-end" : "flex justify-start"
-              }`}
+              className={`scroll-mt-28 rounded-2xl ${isUser ? "flex justify-end" : "flex justify-start"} target:ring-2 target:ring-brand/30`}
             >
-              <div className={`max-w-[92%] ${isUser ? "items-end" : "items-start"} flex flex-col gap-1`}>
-                <div className="flex items-center gap-2 px-1 text-[11px] font-medium uppercase tracking-wide text-zinc-400">
+              <div className={`w-full max-w-2xl ${isUser ? "items-end" : "items-start"} flex flex-col gap-1.5`}>
+                <div className="flex items-center gap-2 px-1 text-[10px] font-semibold tracking-[0.12em] text-zinc-400 uppercase">
                   <span>{roleLabel(message.role, respondentName)}</span>
-                  <span>#{message.sequenceNo}</span>
+                  <span className="tabular-nums text-zinc-300">#{message.sequenceNo}</span>
                 </div>
                 <div
-                  className={`whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-[15px] leading-6 ${
+                  className={`whitespace-pre-wrap px-3.5 py-2.5 text-[14.5px] leading-6 shadow-[0_1px_2px_rgb(7_10_18_/_0.04)] ${
                     isUser
-                      ? "rounded-br-md bg-zinc-900 text-white"
+                      ? "rounded-2xl rounded-br-md bg-ink text-white"
                       : isAssistant
-                        ? "rounded-bl-md bg-zinc-100 text-zinc-900"
-                        : "rounded-bl-md border border-zinc-200 bg-white text-zinc-600"
+                        ? "rounded-2xl rounded-bl-md border border-zinc-200/70 bg-white text-zinc-900"
+                        : "rounded-2xl border border-dashed border-zinc-200 bg-white text-zinc-500"
                   }`}
                 >
                   {message.contentText}

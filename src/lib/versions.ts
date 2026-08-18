@@ -1,4 +1,5 @@
-export const INTERVIEWER_PROMPT_VERSION = "interviewer-v5";
+export const INTERVIEWER_PROMPT_VERSION = "interviewer-v2";
+export const INTERVIEWER_PROMPT_SOURCE = "src/prompts/interviewer.system.v2.md";
 export const ANALYZER_PROMPT_VERSION = "analyzer-v1";
 export const ANALYSIS_SCHEMA_VERSION = "analysis-schema-v1";
 
