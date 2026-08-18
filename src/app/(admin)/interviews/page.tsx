@@ -1,11 +1,14 @@
 import { InterviewStatus } from "@prisma/client";
-import Link from "next/link";
 import { prisma } from "@/lib/db/prisma";
 import { AnalyzeInterviewButton } from "@/components/admin/InterviewControls";
 import {
+  Button,
+  ButtonLink,
   DataTable,
   EmptyState,
   Eyebrow,
+  FormField,
+  FormSelect,
   formatStatus,
   NameCell,
   PageHeader,
@@ -16,9 +19,10 @@ import {
   TableHead,
   TableRow,
   Td,
+  TextInput,
   Th,
   Truncate,
-} from "@/components/admin/ui";
+} from "@/components/shared";
 
 const STATUSES = Object.values(InterviewStatus);
 
@@ -53,28 +57,25 @@ export default async function InterviewsPage({
       />
 
       <form className="flex flex-wrap items-end gap-3">
-        <div className="field min-w-[200px] flex-1">
-          <label htmlFor="vertical">Vertical</label>
-          <input id="vertical" name="vertical" placeholder="e.g. FMCG" defaultValue={vertical ?? ""} />
-        </div>
-        <div className="field min-w-[200px]">
-          <label htmlFor="status">Status</label>
-          <select id="status" name="status" defaultValue={status ?? ""}>
-            <option value="">All statuses</option>
-            {STATUSES.map((value) => (
-              <option key={value} value={value}>
-                {formatStatus(value)}
-              </option>
-            ))}
-          </select>
-        </div>
-        <button className="btn-secondary shrink-0" type="submit">
+        <FormField label="Vertical" htmlFor="vertical" className="min-w-[200px] flex-1">
+          <TextInput id="vertical" name="vertical" placeholder="e.g. FMCG" defaultValue={vertical ?? ""} />
+        </FormField>
+        <FormField label="Status" htmlFor="status" className="min-w-[200px]">
+          <FormSelect
+            id="status"
+            name="status"
+            defaultValue={status ?? ""}
+            emptyLabel="All statuses"
+            items={STATUSES.map((value) => ({ value, label: formatStatus(value) }))}
+          />
+        </FormField>
+        <Button variant="outline" className="shrink-0" type="submit">
           Filter
-        </button>
+        </Button>
         {filtered ? (
-          <Link href="/interviews" className="inline-flex h-10 items-center text-sm text-zinc-500 hover:text-ink">
+          <ButtonLink href="/interviews" variant="ghost" size="sm">
             Clear
-          </Link>
+          </ButtonLink>
         ) : null}
       </form>
 

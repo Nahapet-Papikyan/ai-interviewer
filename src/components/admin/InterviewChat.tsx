@@ -1,4 +1,5 @@
 import type { MessageRole } from "@prisma/client";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/shared";
 
 type Message = {
   id: string;
@@ -22,15 +23,19 @@ function roleLabel(role: MessageRole, respondentName: string) {
 export function InterviewChat({ messages, respondentName }: Props) {
   if (messages.length === 0) {
     return (
-      <section id="transcript" className="card">
-        <h2 className="font-medium">Conversation</h2>
-        <p className="mt-3 text-sm text-zinc-500">No transcript yet for this interview.</p>
-      </section>
+      <Card id="transcript" className="scroll-mt-24 py-5 ring-foreground/8">
+        <CardHeader>
+          <CardTitle>Conversation</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">No transcript yet for this interview.</p>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
-    <section id="transcript" className="card flex min-h-0 flex-col overflow-hidden p-0">
+    <Card id="transcript" className="flex min-h-0 scroll-mt-24 flex-col gap-0 overflow-hidden py-0 ring-foreground/8">
       <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3.5">
         <div>
           <h2 className="text-sm font-semibold text-ink">Conversation</h2>
@@ -76,6 +81,6 @@ export function InterviewChat({ messages, respondentName }: Props) {
           );
         })}
       </div>
-    </section>
+    </Card>
   );
 }

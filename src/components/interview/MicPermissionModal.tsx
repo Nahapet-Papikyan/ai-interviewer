@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { BrandLogo } from "@/components/brand/Logo";
+import { Button } from "@/components/shared";
 
 type Props = {
   firstName: string;
@@ -11,9 +12,6 @@ type Props = {
   sessionError?: string;
   onEnable: () => void;
 };
-
-const primary =
-  "inline-flex h-12 w-full items-center justify-center rounded-full bg-brand px-5 text-sm font-medium text-white hover:bg-[#3b9bff] disabled:opacity-60";
 
 export function MicPermissionModal({
   firstName,
@@ -67,9 +65,9 @@ export function MicPermissionModal({
           {copy.body}
         </p>
         {denied ? <PermissionSteps /> : null}
-        <button className={`${primary} mt-6`} type="button" onClick={onEnable} disabled={connecting}>
+        <Button className="mt-6 h-12 w-full" type="button" onClick={onEnable} disabled={connecting}>
           {copy.action}
-        </button>
+        </Button>
         {connecting ? (
           <p className="mt-3 text-center text-xs leading-5 text-mist">
             Զննարկիչը հարցնում է վերևում։ Սեղմեք Allow, որպեսզի շարունակեք։

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Alert, AlertDescription, Button } from "@/components/shared";
 
 export function CopyToken({ token }: { token: string }) {
   const [copied, setCopied] = useState(false);
@@ -15,13 +16,15 @@ export function CopyToken({ token }: { token: string }) {
   }
 
   return (
-    <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4">
-      <p className="text-[11px] font-semibold tracking-[0.12em] text-amber-800 uppercase">Invitation link — shown once</p>
-      <p className="mt-2 break-all font-mono text-sm text-ink">{url}</p>
-      <button className="btn mt-3" type="button" onClick={copy}>
-        {copied ? "Copied" : "Copy link"}
-      </button>
-    </div>
+    <Alert className="border-amber-200 bg-amber-50 px-5 py-4 text-amber-950">
+      <AlertDescription>
+        <p className="text-[11px] font-semibold tracking-[0.12em] text-amber-800 uppercase">Invitation link — shown once</p>
+        <p className="mt-2 break-all font-mono text-sm text-foreground">{url}</p>
+        <Button className="mt-3" type="button" onClick={copy}>
+          {copied ? "Copied" : "Copy link"}
+        </Button>
+      </AlertDescription>
+    </Alert>
   );
 }
 
@@ -58,18 +61,16 @@ export function AnalyzeInterviewButton({
     state === "running" ? "Analyzing…" : state === "error" ? "Retry analysis" : analyzed ? "Re-analyze" : "Analyze";
 
   return (
-    <button
-      className={
-        compact
-          ? "inline-flex h-8 items-center whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 text-xs font-medium text-ink hover:bg-zinc-50 disabled:opacity-50"
-          : "btn-secondary"
-      }
+    <Button
+      variant={compact ? "outline" : "outline"}
+      size={compact ? "sm" : "lg"}
+      className={compact ? "h-8 rounded-full px-3 text-xs" : undefined}
       type="button"
       onClick={run}
       disabled={disabled || state === "running"}
     >
       {label}
-    </button>
+    </Button>
   );
 }
 

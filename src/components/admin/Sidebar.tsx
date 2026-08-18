@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { BrandLogo } from "@/components/brand/Logo";
+import { Button } from "@/components/shared";
 import { SITE_NAME } from "@/lib/site";
 
 const GROUPS = [
@@ -48,22 +49,25 @@ export function AdminSidebar() {
           <BrandLogo size={26} alt="" />
           <span className="text-sm font-semibold tracking-tight">{SITE_NAME}</span>
         </Link>
-        <button
+        <Button
           type="button"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200 text-ink"
+          variant="outline"
+          size="icon"
+          className="h-9 w-9 px-0"
           aria-expanded={open}
           aria-controls="admin-sidebar"
           onClick={() => setOpen((value) => !value)}
         >
           <span className="sr-only">{open ? "Close menu" : "Open menu"}</span>
           <MenuIcon open={open} />
-        </button>
+        </Button>
       </header>
 
       {open ? (
-        <button
+        <Button
           type="button"
-          className="fixed inset-0 z-40 bg-ink/40 lg:hidden"
+          variant="ghost"
+          className="fixed inset-0 z-40 h-auto w-auto rounded-none bg-ink/40 p-0 hover:bg-ink/40 lg:hidden"
           aria-label="Close menu"
           onClick={() => setOpen(false)}
         />
@@ -114,14 +118,15 @@ export function AdminSidebar() {
         </nav>
 
         <div className="border-t border-white/8 p-3">
-          <button
+          <Button
             type="button"
+            variant="ghost"
+            className="h-auto w-full justify-start gap-2.5 rounded-xl px-3 py-2 text-sm text-mist hover:bg-white/5 hover:text-cloud"
             onClick={logout}
-            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm text-mist transition-colors hover:bg-white/5 hover:text-cloud"
           >
             <LogoutIcon />
             Log out
-          </button>
+          </Button>
         </div>
       </aside>
     </>

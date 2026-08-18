@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db/prisma";
 import { FunnelChart } from "@/components/admin/FunnelChart";
 import { AnalyzeInterviewButton } from "@/components/admin/InterviewControls";
 import {
+  ButtonLink,
   DataTable,
   EmptyState,
   Eyebrow,
@@ -18,7 +19,7 @@ import {
   Td,
   Th,
   Truncate,
-} from "@/components/admin/ui";
+} from "@/components/shared";
 
 const COMPLETED_STATUSES: InterviewStatus[] = [
   InterviewStatus.COMPLETED,
@@ -97,11 +98,7 @@ export default async function DashboardPage() {
           <EmptyState
             title="No interviews yet"
             description="Create a contact and send an invitation to start the research funnel."
-            action={
-              <Link href="/contacts" className="btn">
-                Go to contacts
-              </Link>
-            }
+            action={<ButtonLink href="/contacts">Go to contacts</ButtonLink>}
           />
         ) : (
           <DataTable minWidth={840}>

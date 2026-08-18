@@ -2,6 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { Alert, AlertDescription, Button, FormField, TextInput } from "@/components/shared";
 import { BrandLogo } from "@/components/brand/Logo";
 import { SITE_NAME } from "@/lib/site";
 
@@ -40,11 +41,8 @@ export function LoginForm() {
         <h1 className="mt-2 text-2xl font-semibold tracking-tight text-cloud">Admin login</h1>
         <p className="mt-2 text-sm leading-6 text-mist">Internal discovery dashboard.</p>
         <form onSubmit={onSubmit} className="mt-8 space-y-4">
-          <div className="field">
-            <label htmlFor="password" className="text-mist">
-              Password
-            </label>
-            <input
+          <FormField label="Password" htmlFor="password" labelClassName="text-mist">
+            <TextInput
               id="password"
               name="password"
               type="password"
@@ -52,15 +50,15 @@ export function LoginForm() {
               autoFocus
               className="border-white/10 bg-white/5 text-cloud placeholder:text-mist/50"
             />
-          </div>
-          {error ? <p className="text-sm text-red-400">{error}</p> : null}
-          <button
-            className="inline-flex w-full items-center justify-center rounded-full bg-brand px-5 py-2.5 text-sm font-medium text-white shadow-[0_0_0_1px_rgb(22_135_248_/_0.4),0_8px_24px_rgb(22_135_248_/_0.18)] hover:bg-[#3b9bff] disabled:opacity-60"
-            disabled={pending}
-            type="submit"
-          >
+          </FormField>
+          {error ? (
+            <Alert variant="destructive" className="border-red-500/30 bg-red-500/10">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+          <Button className="h-11 w-full" disabled={pending} type="submit">
             {pending ? "Signing in…" : "Sign in"}
-          </button>
+          </Button>
         </form>
       </div>
     </main>

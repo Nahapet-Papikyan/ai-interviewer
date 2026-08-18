@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { createContact } from "../../actions";
-import { Breadcrumb, PageHeader } from "@/components/admin/ui";
+import { Breadcrumb, Button, FormField, FormSelect, PageHeader, Surface, TextInput } from "@/components/shared";
 
 export default async function NewContactPage({
   searchParams,
@@ -13,53 +13,42 @@ export default async function NewContactPage({
   return (
     <div className="max-w-2xl space-y-6">
       <PageHeader eyebrow={<Breadcrumb href="/contacts">Contacts</Breadcrumb>} title="New contact" />
-      <form action={createContact} className="card space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="field sm:col-span-2">
-            <label>Company</label>
-            <select name="companyId" defaultValue={companyId ?? ""} required>
-              <option value="" disabled>
-                Select company
-              </option>
-              {companies.map((company) => (
-                <option key={company.id} value={company.id}>
-                  {company.name}
-                </option>
-              ))}
-            </select>
+      <form action={createContact}>
+        <Surface>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField label="Company" className="sm:col-span-2">
+              <FormSelect
+                name="companyId"
+                defaultValue={companyId ?? ""}
+                placeholder="Select company"
+                required
+                items={companies.map((company) => ({ value: company.id, label: company.name }))}
+              />
+            </FormField>
+            <FormField label="First name">
+              <TextInput name="firstName" required />
+            </FormField>
+            <FormField label="Last name">
+              <TextInput name="lastName" />
+            </FormField>
+            <FormField label="Role">
+              <TextInput name="role" placeholder="CEO" required />
+            </FormField>
+            <FormField label="Preferred language">
+              <TextInput name="preferredLanguage" defaultValue="hy" />
+            </FormField>
+            <FormField label="Email" className="sm:col-span-2">
+              <TextInput name="email" type="email" />
+            </FormField>
+            <FormField label="LinkedIn">
+              <TextInput name="linkedinUrl" />
+            </FormField>
+            <FormField label="Phone">
+              <TextInput name="phone" />
+            </FormField>
           </div>
-          <div className="field">
-            <label>First name</label>
-            <input name="firstName" required />
-          </div>
-          <div className="field">
-            <label>Last name</label>
-            <input name="lastName" />
-          </div>
-          <div className="field">
-            <label>Role</label>
-            <input name="role" placeholder="CEO" required />
-          </div>
-          <div className="field">
-            <label>Preferred language</label>
-            <input name="preferredLanguage" defaultValue="hy" />
-          </div>
-          <div className="field sm:col-span-2">
-            <label>Email</label>
-            <input name="email" type="email" />
-          </div>
-          <div className="field">
-            <label>LinkedIn</label>
-            <input name="linkedinUrl" />
-          </div>
-          <div className="field">
-            <label>Phone</label>
-            <input name="phone" />
-          </div>
-        </div>
-        <button className="btn" type="submit">
-          Save
-        </button>
+          <Button type="submit">Save</Button>
+        </Surface>
       </form>
     </div>
   );

@@ -1,48 +1,40 @@
 import { createCompany } from "../../actions";
-import { Breadcrumb, PageHeader } from "@/components/admin/ui";
+import { Breadcrumb, Button, FormField, PageHeader, Surface, TextArea, TextInput } from "@/components/shared";
 
 export default function NewCompanyPage() {
   return (
     <div className="max-w-2xl space-y-6">
       <PageHeader eyebrow={<Breadcrumb href="/companies">Companies</Breadcrumb>} title="New company" />
-      <form action={createCompany} className="card space-y-4">
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="field">
-            <label>Name</label>
-            <input name="name" required />
+      <form action={createCompany}>
+        <Surface>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField label="Name">
+              <TextInput name="name" required />
+            </FormField>
+            <FormField label="Legal name">
+              <TextInput name="legalName" />
+            </FormField>
+            <FormField label="Website">
+              <TextInput name="website" />
+            </FormField>
+            <FormField label="Vertical">
+              <TextInput name="vertical" required placeholder="FMCG distribution" />
+            </FormField>
+            <FormField label="Employee range" className="sm:col-span-2">
+              <TextInput name="employeeRange" placeholder="20-50" />
+            </FormField>
+            <FormField label="Notes" className="sm:col-span-2">
+              <TextArea name="notes" rows={3} />
+            </FormField>
+            <FormField label="Verified facts (one per line)">
+              <TextArea name="verifiedFacts" rows={4} />
+            </FormField>
+            <FormField label="Hypotheses (one per line — never presented as facts)">
+              <TextArea name="hypotheses" rows={4} />
+            </FormField>
           </div>
-          <div className="field">
-            <label>Legal name</label>
-            <input name="legalName" />
-          </div>
-          <div className="field">
-            <label>Website</label>
-            <input name="website" />
-          </div>
-          <div className="field">
-            <label>Vertical</label>
-            <input name="vertical" required placeholder="FMCG distribution" />
-          </div>
-          <div className="field sm:col-span-2">
-            <label>Employee range</label>
-            <input name="employeeRange" placeholder="20-50" />
-          </div>
-          <div className="field sm:col-span-2">
-            <label>Notes</label>
-            <textarea name="notes" rows={3} />
-          </div>
-          <div className="field">
-            <label>Verified facts (one per line)</label>
-            <textarea name="verifiedFacts" rows={4} />
-          </div>
-          <div className="field">
-            <label>Hypotheses (one per line — never presented as facts)</label>
-            <textarea name="hypotheses" rows={4} />
-          </div>
-        </div>
-        <button className="btn" type="submit">
-          Save
-        </button>
+          <Button type="submit">Save</Button>
+        </Surface>
       </form>
     </div>
   );

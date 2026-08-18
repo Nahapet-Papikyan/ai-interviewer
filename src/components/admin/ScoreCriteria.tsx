@@ -1,5 +1,5 @@
 import { SCORE_CRITERIA } from "@/lib/interview/scoring";
-import { ScoreRing, scoreTone } from "@/components/admin/ui";
+import { ButtonAnchor, Checkbox, Pill, ScoreRing, scoreTone } from "@/components/shared";
 
 type Props = {
   breakdown: Record<string, unknown>;
@@ -143,7 +143,10 @@ export function ResearchGates({
               : "border-zinc-200 bg-zinc-50 text-zinc-600"
           }`}
         >
-          <div className="text-[10px] font-semibold tracking-[0.1em] uppercase opacity-70">{gate.label}</div>
+          <div className="flex items-center gap-2">
+            <Checkbox checked={gate.hit} readOnly aria-label={gate.label} />
+            <div className="text-[10px] font-semibold tracking-[0.1em] uppercase opacity-70">{gate.label}</div>
+          </div>
           <div className="mt-1 font-medium">{gate.value}</div>
         </li>
       ))}
@@ -175,12 +178,8 @@ export function ProcessFlow({
               ) : null}
               <p className="text-sm font-medium text-ink">{step.action}</p>
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                {step.system ? (
-                  <span className="rounded-md bg-zinc-100 px-2 py-0.5 text-[11px] text-zinc-600">{step.system}</span>
-                ) : null}
-                {step.manual ? (
-                  <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-800">Manual</span>
-                ) : null}
+                {step.system ? <Pill>{step.system}</Pill> : null}
+                {step.manual ? <Pill tone="warn">Manual</Pill> : null}
               </div>
             </div>
           </li>
@@ -225,26 +224,24 @@ export function EvidenceList({
               <p className="min-w-0 truncate text-sm font-medium text-ink" title={item.fieldName}>
                 {formatEvidenceField(item.fieldName)}
               </p>
-              <span
-                className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide ${
-                  item.evidenceType === "EXPLICIT"
-                    ? "bg-emerald-50 text-emerald-800"
-                    : item.evidenceType === "DERIVED"
-                      ? "bg-amber-50 text-amber-800"
-                      : "bg-zinc-100 text-zinc-600"
-                }`}
+              <Pill
+                tone={
+                  item.evidenceType === "EXPLICIT" ? "success" : item.evidenceType === "DERIVED" ? "warn" : "neutral"
+                }
               >
                 {item.evidenceType}
-              </span>
+              </Pill>
             </div>
             <p className="mt-2 flex-1 text-sm leading-6 text-zinc-600">“{item.evidenceText}”</p>
             {item.turn ? (
-              <a
-                className="mt-3 inline-flex w-fit items-center rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-medium text-brand hover:bg-white"
+              <ButtonAnchor
                 href={`#m-${item.turn}`}
+                variant="outline"
+                size="sm"
+                className="mt-3 h-auto py-1 text-xs text-brand hover:text-brand"
               >
                 Jump to turn #{item.turn}
-              </a>
+              </ButtonAnchor>
             ) : null}
           </li>
         ))}

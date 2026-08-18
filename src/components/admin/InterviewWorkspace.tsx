@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Tabs, TabsList, TabsTrigger } from "@/components/shared";
 
 type Tab = "conversation" | "analysis";
 
@@ -56,41 +57,31 @@ export function InterviewWorkspace({
   }
 
   return (
-    <div className="space-y-4">
+    <Tabs
+      value={tab}
+      onValueChange={(value) => {
+        if (value === "analysis" || value === "conversation") select(value);
+      }}
+      className="space-y-4"
+    >
       <div className="sticky top-14 z-20 -mx-1 bg-[#f4f6fa]/90 px-1 py-2 backdrop-blur lg:top-0">
-        <div className="inline-flex rounded-full border border-zinc-200/80 bg-white p-1 shadow-[0_1px_2px_rgb(7_10_18_/_0.04)]">
-          <TabButton active={tab === "analysis"} onClick={() => select("analysis")}>
+        <TabsList className="h-auto rounded-full border border-zinc-200/80 bg-white p-1 text-zinc-500 shadow-[0_1px_2px_rgb(7_10_18_/_0.04)]">
+          <TabsTrigger
+            value="analysis"
+            className="rounded-full px-4 py-2 text-sm font-medium data-active:bg-ink data-active:text-white data-active:shadow-none"
+          >
             {analysisLabel}
-          </TabButton>
-          <TabButton active={tab === "conversation"} onClick={() => select("conversation")}>
+          </TabsTrigger>
+          <TabsTrigger
+            value="conversation"
+            className="rounded-full px-4 py-2 text-sm font-medium data-active:bg-ink data-active:text-white data-active:shadow-none"
+          >
             {conversationLabel}
-          </TabButton>
-        </div>
+          </TabsTrigger>
+        </TabsList>
       </div>
       <div hidden={tab !== "analysis"}>{analysis}</div>
       <div hidden={tab !== "conversation"}>{conversation}</div>
-    </div>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-        active ? "bg-ink text-white" : "text-zinc-500 hover:text-ink"
-      }`}
-    >
-      {children}
-    </button>
+    </Tabs>
   );
 }

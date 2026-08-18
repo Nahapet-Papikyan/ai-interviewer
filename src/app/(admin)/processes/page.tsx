@@ -9,7 +9,7 @@ import {
   Td,
   Th,
   Truncate,
-} from "@/components/admin/ui";
+} from "@/components/shared";
 
 function median(values: number[]) {
   if (!values.length) return null;

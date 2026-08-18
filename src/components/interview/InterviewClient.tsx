@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { OpenAIRealtimeWebRTC, RealtimeAgent, RealtimeSession, tool } from "@openai/agents/realtime";
 import { z } from "zod";
 import { BrandLogo } from "@/components/brand/Logo";
+import { Alert, AlertDescription, Button, TextInput } from "@/components/shared";
 import { MicPermissionModal } from "@/components/interview/MicPermissionModal";
 import { VoiceOrb, type VoiceLevels } from "@/components/interview/VoiceOrb";
 import {
@@ -1379,13 +1380,9 @@ export function InterviewClient({
               <li>Խնդրում ենք չկիսել բիզնեսի գաղտնիքներ կամ հաճախորդների անձնական տվյալներ։</li>
             </ul>
           </div>
-          <button
-            className="mt-8 inline-flex h-11 items-center justify-center rounded-full bg-brand px-5 text-sm font-medium text-white hover:bg-[#3b9bff]"
-            type="button"
-            onClick={acceptConsent}
-          >
+          <Button className="mt-8 h-11 px-5" type="button" onClick={acceptConsent}>
             Համաձայն եմ և սկսել
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -1435,21 +1432,22 @@ export function InterviewClient({
           </div>
         </div>
         <div className="flex shrink-0 gap-2">
-          <button
-            className="inline-flex h-9 items-center rounded-full border border-white/12 bg-white/[0.03] px-3.5 text-sm font-medium text-cloud hover:bg-white/6"
+          <Button
+            variant="outline"
+            className="h-9 border-white/12 bg-white/[0.03] px-3.5 text-cloud hover:bg-white/6 hover:text-cloud"
             type="button"
             onClick={endInterview}
             disabled={showMicGate}
           >
             Ավարտել
-          </button>
+          </Button>
         </div>
       </header>
 
       {error && !showMicGate ? (
-        <p className="relative mt-3 shrink-0 rounded-xl border border-red-400/25 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-          {error}
-        </p>
+        <Alert variant="destructive" className="relative mt-3 shrink-0 border-red-400/25 bg-red-500/10 text-red-200">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
       ) : null}
 
       <div className="relative mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.6rem] border border-white/10 bg-ink-2/80">
@@ -1520,20 +1518,16 @@ export function InterviewClient({
           void sendText();
         }}
       >
-        <input
-          className="min-h-11 flex-1 rounded-full border border-white/12 bg-ink-2 px-4 py-2.5 text-[15px] text-cloud outline-none placeholder:text-mist/70 focus:border-brand/50 disabled:opacity-50"
+        <TextInput
+          className="min-h-11 h-11 flex-1 rounded-full border-white/12 bg-ink-2 px-4 py-2.5 text-[15px] text-cloud placeholder:text-mist/70 focus-visible:border-brand/50"
           value={textInput}
           onChange={(event) => setTextInput(event.target.value)}
           placeholder="Գրեք այստեղ, եթե ձայնը հասանելի չէ"
           disabled={showMicGate}
         />
-        <button
-          className="inline-flex h-11 items-center rounded-full bg-brand px-4 text-sm font-medium text-white hover:bg-[#3b9bff] disabled:opacity-60"
-          type="submit"
-          disabled={showMicGate}
-        >
+        <Button className="h-11" type="submit" disabled={showMicGate}>
           Ուղարկել
-        </button>
+        </Button>
       </form>
 
       {showMicGate ? (

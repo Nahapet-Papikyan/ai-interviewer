@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db/prisma";
 import {
+  ButtonLink,
   DataTable,
   EmptyState,
   Eyebrow,
@@ -12,7 +13,7 @@ import {
   Td,
   Th,
   Truncate,
-} from "@/components/admin/ui";
+} from "@/components/shared";
 
 export default async function ContactsPage() {
   const contacts = await prisma.contact.findMany({
@@ -26,22 +27,14 @@ export default async function ContactsPage() {
         eyebrow={<Eyebrow>Directory</Eyebrow>}
         title="Contacts"
         description="People invited into discovery interviews."
-        actions={
-          <Link href="/contacts/new" className="btn">
-            New contact
-          </Link>
-        }
+        actions={<ButtonLink href="/contacts/new">New contact</ButtonLink>}
       />
 
       {contacts.length === 0 ? (
         <EmptyState
           title="No contacts yet"
           description="Add a contact under a company, then create an interview invitation."
-          action={
-            <Link href="/contacts/new" className="btn">
-              New contact
-            </Link>
-          }
+          action={<ButtonLink href="/contacts/new">New contact</ButtonLink>}
         />
       ) : (
         <DataTable>
@@ -61,17 +54,21 @@ export default async function ContactsPage() {
                     <NameCell href={`/contacts/${contact.id}`} name={name} />
                   </Td>
                   <Td>
-                    <Truncate className="text-zinc-600" title={contact.role}>
+                    <Truncate className="text-muted-foreground" title={contact.role}>
                       {contact.role}
                     </Truncate>
                   </Td>
                   <Td>
-                    <Link href={`/companies/${contact.company.id}`} className="block max-w-[180px] truncate hover:text-brand" title={contact.company.name}>
+                    <Link
+                      href={`/companies/${contact.company.id}`}
+                      className="block max-w-[180px] truncate hover:text-primary"
+                      title={contact.company.name}
+                    >
                       {contact.company.name}
                     </Link>
                   </Td>
-                  <Td className="tabular-nums text-zinc-600">{contact._count.interviews}</Td>
-                  <Td className="text-zinc-500">{formatDate(contact.createdAt)}</Td>
+                  <Td className="tabular-nums text-muted-foreground">{contact._count.interviews}</Td>
+                  <Td className="text-muted-foreground">{formatDate(contact.createdAt)}</Td>
                 </TableRow>
               );
             })}

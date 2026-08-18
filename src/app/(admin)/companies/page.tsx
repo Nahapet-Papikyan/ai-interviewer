@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db/prisma";
 import {
+  ButtonLink,
   DataTable,
   EmptyState,
   Eyebrow,
@@ -12,7 +13,7 @@ import {
   Td,
   Th,
   Truncate,
-} from "@/components/admin/ui";
+} from "@/components/shared";
 
 export default async function CompaniesPage() {
   const companies = await prisma.company.findMany({
@@ -26,22 +27,14 @@ export default async function CompaniesPage() {
         eyebrow={<Eyebrow>Directory</Eyebrow>}
         title="Companies"
         description="Organizations in the discovery pipeline."
-        actions={
-          <Link href="/companies/new" className="btn">
-            New company
-          </Link>
-        }
+        actions={<ButtonLink href="/companies/new">New company</ButtonLink>}
       />
 
       {companies.length === 0 ? (
         <EmptyState
           title="No companies yet"
           description="Add a company to start inviting contacts."
-          action={
-            <Link href="/companies/new" className="btn">
-              New company
-            </Link>
-          }
+          action={<ButtonLink href="/companies/new">New company</ButtonLink>}
         />
       ) : (
         <DataTable>
@@ -59,13 +52,13 @@ export default async function CompaniesPage() {
                   <NameCell href={`/companies/${company.id}`} name={company.name} />
                 </Td>
                 <Td>
-                  <Truncate className="text-zinc-600" title={company.vertical}>
+                  <Truncate className="text-muted-foreground" title={company.vertical}>
                     {company.vertical}
                   </Truncate>
                 </Td>
-                <Td className="tabular-nums text-zinc-600">{company._count.contacts}</Td>
-                <Td className="tabular-nums text-zinc-600">{company._count.interviews}</Td>
-                <Td className="text-zinc-500">{formatDate(company.createdAt)}</Td>
+                <Td className="tabular-nums text-muted-foreground">{company._count.contacts}</Td>
+                <Td className="tabular-nums text-muted-foreground">{company._count.interviews}</Td>
+                <Td className="text-muted-foreground">{formatDate(company.createdAt)}</Td>
               </TableRow>
             ))}
           </tbody>

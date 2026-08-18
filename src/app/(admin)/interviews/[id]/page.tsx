@@ -12,7 +12,7 @@ import {
   ResearchGates,
   ScoreCriteria,
 } from "@/components/admin/ScoreCriteria";
-import { Breadcrumb, Eyebrow, PageHeader, Pill, StatusBadge } from "@/components/admin/ui";
+import { Breadcrumb, Button, ButtonAnchor, Card, CardContent, Eyebrow, FormField, PageHeader, Pill, StatusBadge, Surface, TextArea } from "@/components/shared";
 import { FTE_HOURS_PER_MONTH } from "@/lib/versions";
 
 export default async function InterviewDetailPage({
@@ -81,12 +81,8 @@ export default async function InterviewDetailPage({
         }
         actions={
           <>
-            <a className="btn-secondary" href={`/api/interviews/${interview.id}/export`}>
-              Export JSON
-            </a>
-            <a className="btn-secondary" href={`/api/interviews/${interview.id}/export?format=csv`}>
-              Export CSV
-            </a>
+            <ButtonAnchor href={`/api/interviews/${interview.id}/export`}>Export JSON</ButtonAnchor>
+            <ButtonAnchor href={`/api/interviews/${interview.id}/export?format=csv`}>Export CSV</ButtonAnchor>
             <RerunAnalysis
               interviewId={interview.id}
               analyzed={interview.processes.length > 0 || Boolean(analysis)}
@@ -99,7 +95,8 @@ export default async function InterviewDetailPage({
       {token ? <CopyToken token={token} /> : null}
 
       {raw?.interviewSummary ? (
-        <div className="card">
+        <Card className="py-5 ring-foreground/8">
+          <CardContent>
           <Eyebrow>What happened</Eyebrow>
           <p className="mt-3 text-[15px] leading-7 text-ink">{raw.interviewSummary.keyTakeaway}</p>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -120,13 +117,16 @@ export default async function InterviewDetailPage({
               ))}
             </ul>
           ) : null}
-        </div>
+          </CardContent>
+        </Card>
       ) : (
-        <div className="card text-sm text-zinc-500">
-          {interview.messages.length
-            ? "Transcript is saved. Run analysis to score this conversation against the research criteria."
-            : "No conversation recorded yet."}
-        </div>
+        <Card className="py-5 ring-foreground/8">
+          <CardContent className="text-sm text-muted-foreground">
+            {interview.messages.length
+              ? "Transcript is saved. Run analysis to score this conversation against the research criteria."
+              : "No conversation recorded yet."}
+          </CardContent>
+        </Card>
       )}
 
       <InterviewWorkspace
@@ -145,7 +145,8 @@ export default async function InterviewDetailPage({
               interview.processes.map((process) => {
                 const breakdown = (process.opportunity?.scoreBreakdown ?? {}) as Record<string, unknown>;
                 return (
-                  <article key={process.id} className="card space-y-5">
+                  <Card key={process.id} className="space-y-5 py-5 ring-foreground/8">
+                    <CardContent className="space-y-5">
                     <ProcessScoreHeader
                       name={process.name}
                       description={process.description}
@@ -196,13 +197,15 @@ export default async function InterviewDetailPage({
                         turn: ev.messageId ? sequenceById.get(ev.messageId) : undefined,
                       }))}
                     />
-                  </article>
+                    </CardContent>
+                  </Card>
                 );
               })
             )}
 
             {raw?.pilot ? (
-              <section className="card space-y-3 text-sm">
+              <Card className="space-y-3 py-5 text-sm ring-foreground/8">
+                <CardContent className="space-y-3">
                 <Eyebrow>Pilot</Eyebrow>
                 <dl className="grid gap-3 sm:grid-cols-2">
                   <Metric label="Willingness" value={raw.pilot.willingness ?? "—"} />
@@ -220,11 +223,13 @@ export default async function InterviewDetailPage({
                     {raw.pilot.blockers.join(", ")}
                   </p>
                 ) : null}
-              </section>
+                </CardContent>
+              </Card>
             ) : null}
 
             {interview.facts.length ? (
-              <section className="card">
+              <Card className="py-5 ring-foreground/8">
+                <CardContent>
                 <Eyebrow>Recorded facts</Eyebrow>
                 <ul className="mt-4 grid gap-2 md:grid-cols-2">
                   {interview.facts.map((fact) => (
@@ -238,11 +243,13 @@ export default async function InterviewDetailPage({
                     </li>
                   ))}
                 </ul>
-              </section>
+                </CardContent>
+              </Card>
             ) : null}
 
             {raw?.followUpQuestions?.length ? (
-              <section className="card">
+              <Card className="py-5 ring-foreground/8">
+                <CardContent>
                 <Eyebrow>Follow-up questions</Eyebrow>
                 <ol className="mt-4 space-y-2 text-sm">
                   {raw.followUpQuestions.map((q, index) => (
@@ -252,29 +259,29 @@ export default async function InterviewDetailPage({
                     </li>
                   ))}
                 </ol>
-              </section>
+                </CardContent>
+              </Card>
             ) : null}
           </div>
         }
         conversation={<InterviewChat messages={interview.messages} respondentName={respondentName} />}
       />
 
-      <form action={markReviewed} className="card space-y-3">
-        <input type="hidden" name="id" value={interview.id} />
-        <Eyebrow>Human review</Eyebrow>
-        <div className="field">
-          <label htmlFor="reviewNotes">Notes</label>
-          <textarea
-            id="reviewNotes"
-            name="reviewNotes"
-            rows={4}
-            defaultValue={interview.reviewNotes ?? ""}
-            placeholder="Notes for the research team"
-          />
-        </div>
-        <button className="btn" type="submit">
-          Mark reviewed
-        </button>
+      <form action={markReviewed}>
+        <Surface>
+          <input type="hidden" name="id" value={interview.id} />
+          <Eyebrow>Human review</Eyebrow>
+          <FormField label="Notes" htmlFor="reviewNotes">
+            <TextArea
+              id="reviewNotes"
+              name="reviewNotes"
+              rows={4}
+              defaultValue={interview.reviewNotes ?? ""}
+              placeholder="Notes for the research team"
+            />
+          </FormField>
+          <Button type="submit">Mark reviewed</Button>
+        </Surface>
       </form>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200 pt-6">
@@ -289,9 +296,9 @@ export default async function InterviewDetailPage({
         </p>
         <form action={deleteInterview}>
           <input type="hidden" name="id" value={interview.id} />
-          <button className="text-sm text-red-600 hover:underline" type="submit">
+          <Button variant="destructive" type="submit">
             Delete interview data
-          </button>
+          </Button>
         </form>
       </div>
     </div>
