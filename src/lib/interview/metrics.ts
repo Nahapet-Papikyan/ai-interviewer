@@ -128,3 +128,44 @@ export function deriveLabor(input: {
 
   return { hours, fte, assumptions };
 }
+
+export function deriveWeeklyLaborHours(input: {
+  weeklyVolumeMin?: number | null;
+  weeklyVolumeMax?: number | null;
+  hoursEachMin?: number | null;
+  hoursEachMax?: number | null;
+  minutesEachMin?: number | null;
+  minutesEachMax?: number | null;
+}): Range {
+  const volume = rangeFromMinMax(input.weeklyVolumeMin, input.weeklyVolumeMax);
+  const hoursEach =
+    input.hoursEachMin != null || input.hoursEachMax != null
+      ? rangeFromMinMax(input.hoursEachMin, input.hoursEachMax)
+      : rangeFromMinMax(
+          input.minutesEachMin != null ? input.minutesEachMin / 60 : null,
+          input.minutesEachMax != null ? input.minutesEachMax / 60 : null,
+        );
+  if (volume.min == null || hoursEach.min == null) {
+    return { min: null, max: null, pointEstimate: null };
+  }
+  return {
+    min: volume.min * hoursEach.min,
+    max: (volume.max ?? volume.min) * (hoursEach.max ?? hoursEach.min),
+    pointEstimate: (volume.pointEstimate ?? volume.min) * (hoursEach.pointEstimate ?? hoursEach.min),
+  };
+}
+
+export function laborTotalsForProcess(input: {
+  knownStageHours: Range;
+  additionalLaborUnknown?: boolean;
+  knownStagesOnly?: boolean;
+}): { firstStageLabor: Range; additionalLaborUnknown: boolean; totalLabor: Range } {
+  const unknown = Boolean(input.additionalLaborUnknown || input.knownStagesOnly);
+  return {
+    firstStageLabor: input.knownStageHours,
+    additionalLaborUnknown: unknown,
+    totalLabor: unknown
+      ? { min: null, max: null, pointEstimate: null }
+      : input.knownStageHours,
+  };
+}

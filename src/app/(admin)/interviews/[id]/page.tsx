@@ -14,6 +14,7 @@ import {
 } from "@/components/admin/ScoreCriteria";
 import { Breadcrumb, ButtonAnchor, Card, CardContent, Eyebrow, FormField, PageHeader, PendingButton, Pill, StatusBadge, Surface, TextArea } from "@/components/shared";
 import { FTE_HOURS_PER_MONTH } from "@/lib/versions";
+import { parseRuntimeState } from "@/lib/interview/runtime-state";
 
 export default async function InterviewDetailPage({
   params,
@@ -60,6 +61,7 @@ export default async function InterviewDetailPage({
   const duration = interview.durationSeconds ? `${Math.round(interview.durationSeconds / 60)} min` : "—";
   const sequenceById = new Map(interview.messages.map((message) => [message.id, message.sequenceNo]));
   const contactName = `${interview.contact.firstName} ${interview.contact.lastName ?? ""}`.trim();
+  const runtime = parseRuntimeState(interview.state);
 
   return (
     <div className="space-y-8">
@@ -235,17 +237,40 @@ export default async function InterviewDetailPage({
                   {interview.facts.map((fact) => (
                     <li key={fact.id} className="rounded-xl border border-zinc-100 bg-[#f7f9fc] px-3 py-2 text-sm">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-medium text-ink">{fact.category}</span>
+                        <span className="font-medium text-ink">{fact.factKey || fact.category}</span>
                         {fact.status && fact.status !== "CONFIRMED" ? <Pill tone="warn">{fact.status}</Pill> : null}
                         {fact.processName ? <span className="text-xs text-zinc-400">{fact.processName}</span> : null}
                       </div>
                       <p className="mt-1 text-zinc-600">{fact.value}</p>
+                      {fact.minValue != null || fact.maxValue != null ? (
+                        <p className="mt-1 text-xs text-zinc-400">
+                          {fact.minValue ?? "?"}–{fact.maxValue ?? "?"} {fact.unit ?? ""} {fact.period ?? ""} {fact.scope ?? ""}
+                        </p>
+                      ) : null}
                     </li>
                   ))}
                 </ul>
                 </CardContent>
               </Card>
             ) : null}
+
+            <Card className="py-5 ring-foreground/8">
+              <CardContent>
+                <Eyebrow>Runtime reasoning</Eyebrow>
+                <p className="mt-3 text-sm text-zinc-600">
+                  Phase {runtime.phase} · revision {runtime.stateRevision}
+                  {runtime.lastPlan?.intent ? ` · next: ${runtime.lastPlan.questionKey}` : ""}
+                </p>
+                <ul className="mt-3 space-y-1 text-xs text-zinc-500">
+                  {runtime.canonicalFacts.map((fact) => (
+                    <li key={fact.key}>
+                      {fact.key} · {fact.status}
+                      {fact.quantity?.min != null ? ` · ${fact.quantity.min}–${fact.quantity.max}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
 
             {raw?.followUpQuestions?.length ? (
               <Card className="py-5 ring-foreground/8">

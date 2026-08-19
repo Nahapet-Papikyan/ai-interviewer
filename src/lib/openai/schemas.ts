@@ -26,6 +26,8 @@ export const InterviewAnalysisSchema = z.object({
         rawStatement: z.string().nullable(),
         perDayMin: z.number().nullable(),
         perDayMax: z.number().nullable(),
+        perWeekMin: z.number().nullable().optional(),
+        perWeekMax: z.number().nullable().optional(),
         perMonthMin: z.number().nullable(),
         perMonthMax: z.number().nullable(),
         basis: z.enum(["EXPLICIT", "DERIVED", "UNKNOWN"]),
@@ -40,6 +42,8 @@ export const InterviewAnalysisSchema = z.object({
         fteMin: z.number().nullable(),
         fteMax: z.number().nullable(),
         assumptions: z.array(z.string()),
+        knownStagesOnly: z.boolean().optional(),
+        additionalLaborUnknown: z.boolean().optional(),
       }),
       systems: z.array(
         z.object({

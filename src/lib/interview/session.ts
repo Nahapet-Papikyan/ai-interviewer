@@ -61,12 +61,17 @@ export async function loadRuntimeState(interviewId: string): Promise<InterviewRu
 export async function saveRuntimeState(
   interviewId: string,
   patch: Partial<InterviewRuntimeState>,
+  options?: { bumpRevision?: boolean },
 ): Promise<InterviewRuntimeState> {
   const interview = await prisma.interview.findUnique({
     where: { id: interviewId },
     select: { state: true },
   });
-  const next = mergeRuntimeState(parseRuntimeState(interview?.state), patch);
+  const current = parseRuntimeState(interview?.state);
+  const next = mergeRuntimeState(current, patch);
+  if (options?.bumpRevision) {
+    next.stateRevision = current.stateRevision + 1;
+  }
   await prisma.interview.update({
     where: { id: interviewId },
     data: { state: next as Prisma.InputJsonValue },

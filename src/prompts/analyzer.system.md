@@ -44,6 +44,12 @@ automation is valuable.
     may make the value explicit.
 16. If a transcript looks garbled or mixed-language-nonsensical, leave
     numeric fields null. Unknown is better than a precise-looking guess.
+17. Preserve weekly volume as weekly when the respondent answered weekly.
+    Put weekly values in `perWeekMin` / `perWeekMax`. The application
+    converts weeks to months with 4.33.
+18. If only one stage's labor time is known and later stages or rework
+    were not measured, set `knownStagesOnly` and `additionalLaborUnknown`.
+    Do not treat first-stage labor as total process labor.
 
 ### Process boundary
 
@@ -127,6 +133,8 @@ const InterviewAnalysisSchema = z.object({
       rawStatement: z.string().nullable(),
       perDayMin: z.number().nullable(),
       perDayMax: z.number().nullable(),
+      perWeekMin: z.number().nullable(),
+      perWeekMax: z.number().nullable(),
       perMonthMin: z.number().nullable(),
       perMonthMax: z.number().nullable(),
       basis: z.enum(["EXPLICIT", "DERIVED", "UNKNOWN"]),
@@ -142,6 +150,8 @@ const InterviewAnalysisSchema = z.object({
       fteMin: z.number().nullable(),
       fteMax: z.number().nullable(),
       assumptions: z.array(z.string()),
+      knownStagesOnly: z.boolean(),
+      additionalLaborUnknown: z.boolean(),
     }),
 
     systems: z.array(z.object({

@@ -11,6 +11,7 @@ import {
   CONTINUE_RESPONSE_INSTRUCTIONS,
   NOISE_IGNORE_NOTE,
   openingResponseInstructions,
+  TOOL_FAIL_RESULT,
   TOOL_REJECT_RESULT,
   TOOL_SILENT_RESULT,
   cancelConnectionTeardown,
@@ -38,11 +39,15 @@ import {
 import { interviewCopy } from "@/lib/interview/copy";
 import { restoreWindow } from "@/lib/interview/messages";
 import {
+  applyAuthoritativeRuntimeState,
+  buildCompactRuntimeUpdate,
   hydrateRuntimeState,
   shouldConnectRealtime,
   shouldTriggerOpening,
   type InterviewRuntimeState,
 } from "@/lib/interview/runtime-state";
+import { buildClarificationToolResult, buildPlannerToolResult } from "@/lib/interview/question-planner";
+import type { NextQuestionPlan } from "@/lib/interview/reasoning-state";
 import { assessTranscriptQuality, isNoiseTranscript, qualitySystemNote } from "@/lib/interview/transcript-quality";
 import { attachProcessedMic } from "@/lib/interview/mic-processing";
 import type { InterviewFeatureFlags } from "@/lib/flags";
@@ -245,6 +250,7 @@ export function InterviewClient({
   });
   const audioKeywordsRef = useRef<string[] | undefined>(undefined);
   const [hadLiveSession, setHadLiveSession] = useState(false);
+  const [confirmEndOpen, setConfirmEndOpen] = useState(false);
 
   useEffect(() => {
     interviewIdRef.current = interviewId;
@@ -253,6 +259,15 @@ export function InterviewClient({
   useEffect(() => {
     statusRef.current = status;
   }, [status]);
+
+  useEffect(() => {
+    if (!confirmEndOpen) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setConfirmEndOpen(false);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirmEndOpen]);
 
   useEffect(() => {
     configureClientInterviewTrace({ token, interviewId });
@@ -372,8 +387,13 @@ export function InterviewClient({
       connectionGeneration: generationRef.current,
     });
     try {
-      return await work();
-    } catch {
+      return fallback;
+    } catch (err) {
+      interviewLog("TOOL_CALL_FAILED", {
+        interviewId: interviewIdRef.current,
+        connectionGeneration: generationRef.current,
+        error: summarizeUnknownError(err),
+      });
       return fallback;
     } finally {
       pendingToolsRef.current = Math.max(0, pendingToolsRef.current - 1);
@@ -523,6 +543,49 @@ export function InterviewClient({
     void sessionAction(token, "runtime", patch);
   }
 
+  function applyServerRuntime(incoming: InterviewRuntimeState | undefined) {
+    if (!incoming) return runtimeRef.current;
+    const previous = runtimeRef.current;
+    const next = applyAuthoritativeRuntimeState(previous, incoming, latestTurnsRef.current);
+    runtimeRef.current = next;
+    if (next.stateRevision >= previous.stateRevision) {
+      interviewLog("RUNTIME_STATE_SYNCED", {
+        interviewId: interviewIdRef.current,
+        stateRevision: next.stateRevision,
+        phase: next.phase,
+        factKey: next.lastPlan?.questionKey,
+        reason: next.lastPlan?.reason,
+      });
+      try {
+        sessionRef.current?.transport.sendEvent({
+          type: "conversation.item.create",
+          item: {
+            type: "message",
+            role: "system",
+            content: [{ type: "input_text", text: buildCompactRuntimeUpdate(next) }],
+          },
+        });
+      } catch {
+        // data channel may not be open
+      }
+    }
+    return next;
+  }
+
+  function toolResultFromSession(result: {
+    recorded?: boolean;
+    runtimeState?: InterviewRuntimeState;
+    nextQuestion?: NextQuestionPlan;
+    reason?: string;
+  } | null) {
+    const state = applyServerRuntime(result?.runtimeState);
+    const plan = result?.nextQuestion ?? state.lastPlan;
+    if (result?.recorded === false) {
+      return plan ? buildClarificationToolResult(plan) : TOOL_REJECT_RESULT;
+    }
+    return plan ? buildPlannerToolResult(plan) : TOOL_SILENT_RESULT;
+  }
+
   /* eslint-disable react-hooks/refs, react-hooks/exhaustive-deps -- tool execute closures run later via the Realtime SDK */
   const tools = useMemo(
     () => [
@@ -536,9 +599,9 @@ export function InterviewClient({
         }),
         async execute({ name, short_reason }) {
           return runToolSilently(async () => {
-            await sessionAction(token, "process", { name, shortReason: short_reason });
-            return TOOL_SILENT_RESULT;
-          }, TOOL_SILENT_RESULT);
+            const result = await sessionAction(token, "process", { name, shortReason: short_reason });
+            return toolResultFromSession(result);
+          }, TOOL_FAIL_RESULT);
         },
       }),
       tool({
@@ -564,9 +627,8 @@ export function InterviewClient({
               rawTranscript: raw_transcript || undefined,
               sourceRole: "user",
             });
-            if (result?.recorded === false) return TOOL_REJECT_RESULT;
-            return TOOL_SILENT_RESULT;
-          }, TOOL_SILENT_RESULT);
+            return toolResultFromSession(result);
+          }, TOOL_FAIL_RESULT);
         },
       }),
       tool({
@@ -1508,7 +1570,7 @@ export function InterviewClient({
             variant="outline"
             className="h-9 border-white/12 bg-white/[0.03] px-3.5 text-cloud hover:bg-white/6 hover:text-cloud"
             type="button"
-            onClick={endInterview}
+            onClick={() => setConfirmEndOpen(true)}
             disabled={showMicGate}
           >
             {copy.end}
@@ -1522,7 +1584,7 @@ export function InterviewClient({
         </Alert>
       ) : null}
 
-      <div className="relative mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1.6rem] border border-white/10 bg-ink-2/80">
+      <div className="relative mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[1rem] border border-white/10 bg-ink-2/80">
         {status !== "text" ? (
           <VoiceOrb
             mode={voiceMode}
@@ -1602,6 +1664,49 @@ export function InterviewClient({
           {copy.send}
         </Button>
       </form>
+
+      {confirmEndOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/75 px-4 backdrop-blur-md"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="end-interview-title"
+          aria-describedby="end-interview-copy"
+          onClick={() => setConfirmEndOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-[1.6rem] border border-white/10 bg-ink-2 p-6 shadow-[0_24px_80px_rgb(0_0_0_/_0.45)]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <h2 id="end-interview-title" className="text-lg font-semibold tracking-tight text-cloud">
+              {copy.endConfirmTitle}
+            </h2>
+            <p id="end-interview-copy" className="mt-2 text-sm leading-6 text-mist">
+              {copy.endConfirmBody}
+            </p>
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button
+                variant="outline"
+                className="h-11 border-white/12 bg-white/[0.03] text-cloud hover:bg-white/6 hover:text-cloud"
+                type="button"
+                onClick={() => setConfirmEndOpen(false)}
+              >
+                {copy.endConfirmCancel}
+              </Button>
+              <Button
+                className="h-11"
+                type="button"
+                onClick={() => {
+                  setConfirmEndOpen(false);
+                  void endInterview();
+                }}
+              >
+                {copy.endConfirmAction}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {showMicGate ? (
         <MicPermissionModal

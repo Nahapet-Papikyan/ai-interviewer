@@ -45,6 +45,7 @@ enum FactStatus {
   CONFIRMED
   UNCERTAIN
   INFERRED
+  CONFLICT
 }
 
 model Company {
@@ -148,9 +149,21 @@ model InterviewFact {
   confidence      Float?
   rawTranscript   String?
   sourceRole      String     @default("user")
+  factKey         String?
+  processKey      String?
+  quantity        Json?
+  minValue        Float?
+  maxValue        Float?
+  unit            String?
+  period          String?
+  scope           String?
+  stage           String?
   createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
 
   interview Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+
+  @@index([interviewId, factKey])
 }
 
 model Process {

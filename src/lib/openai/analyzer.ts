@@ -5,7 +5,7 @@ import { prisma } from "@/lib/db/prisma";
 import { isReliableNumericSource, laborLooksContradictory } from "@/lib/interview/facts";
 import { getAnalyzerPrompt } from "@/lib/interview/context";
 import { interviewLog } from "@/lib/interview/logging";
-import { deriveLabor, deriveMonthlyTransactions } from "@/lib/interview/metrics";
+import { deriveLabor, deriveMonthlyTransactions, laborTotalsForProcess, rangeFromMinMax } from "@/lib/interview/metrics";
 import { isAnalysisRunningOrDone, shouldStartAnalysis } from "@/lib/interview/runtime-state";
 import { totalFromBreakdown } from "@/lib/interview/scoring";
 import { InterviewAnalysisSchema, type InterviewAnalysis } from "@/lib/openai/schemas";
@@ -25,7 +25,7 @@ function volumeIsReliable(
 ) {
   if (process.volume.basis === "UNKNOWN") return false;
   const related = process.evidence.filter((ev) =>
-    /volume|perDay|perMonth|transaction/i.test(ev.field),
+    /volume|perDay|perWeek|perMonth|transaction/i.test(ev.field),
   );
   if (related.length === 0) return process.volume.basis === "EXPLICIT";
   return related.every((ev) =>
@@ -179,15 +179,18 @@ export async function runInterviewAnalysis(interviewId: string, options?: { forc
           perDayMax: process.volume.perDayMax,
           perMonthMin: process.volume.perMonthMin,
           perMonthMax: process.volume.perMonthMax,
+          weeklyMin: process.volume.perWeekMin,
+          weeklyMax: process.volume.perWeekMax,
           reliable: reliableVolume,
         });
-        const weeklyVolume =
-          monthly.pointEstimate != null ? monthly.pointEstimate / WEEKS_PER_MONTH : null;
-        const minutes =
-          process.labor.minutesPerTransactionMin ?? process.labor.minutesPerTransactionMax ?? null;
+        const weeklyVolumeMax =
+          process.volume.perWeekMax ??
+          (monthly.max != null ? monthly.max / WEEKS_PER_MONTH : null);
+        const minutesMax =
+          process.labor.minutesPerTransactionMax ?? process.labor.minutesPerTransactionMin ?? null;
         const contradictory = laborLooksContradictory({
-          weeklyVolume,
-          minutesEach: minutes,
+          weeklyVolume: weeklyVolumeMax,
+          minutesEach: minutesMax,
           people: process.labor.peopleInvolved,
         });
         const labor = deriveLabor({
@@ -200,6 +203,20 @@ export async function runInterviewAnalysis(interviewId: string, options?: { forc
           reliable: reliableVolume && reliableLabor,
           contradictory,
         });
+        const stageLimited = Boolean(process.labor.knownStagesOnly || process.labor.additionalLaborUnknown);
+        const totals = laborTotalsForProcess({
+          knownStageHours: rangeFromMinMax(labor.hours.min, labor.hours.max),
+          knownStagesOnly: process.labor.knownStagesOnly,
+          additionalLaborUnknown: process.labor.additionalLaborUnknown,
+        });
+        if (stageLimited) {
+          labor.hours = totals.totalLabor;
+          labor.fte = { min: null, max: null, pointEstimate: null };
+          labor.assumptions = [
+            ...labor.assumptions,
+            "total process labor unknown because only known-stage time was measured",
+          ];
+        }
 
         const breakdown = {
           volume: process.scoring.volume,
@@ -228,10 +245,10 @@ export async function runInterviewAnalysis(interviewId: string, options?: { forc
             minutesTransactionMin: process.labor.minutesPerTransactionMin,
             minutesTransactionMax: process.labor.minutesPerTransactionMax,
             employeesInvolved: process.labor.peopleInvolved,
-            manualHoursMonthMin: labor.hours.min,
-            manualHoursMonthMax: labor.hours.max,
-            fteMin: labor.fte.min,
-            fteMax: labor.fte.max,
+            manualHoursMonthMin: stageLimited ? null : labor.hours.min,
+            manualHoursMonthMax: stageLimited ? null : labor.hours.max,
+            fteMin: stageLimited ? null : labor.fte.min,
+            fteMax: stageLimited ? null : labor.fte.max,
             automationScore: total,
             confidence: process.automation.confidence,
             clusterTag: parsed.crossInterviewTags[0] ?? process.name,

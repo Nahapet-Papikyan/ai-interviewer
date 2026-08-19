@@ -1,5 +1,5 @@
 export const DEFAULT_REALTIME_MODEL = "gpt-realtime-2.1";
-export const DEFAULT_REALTIME_VOICE = "sage";
+export const DEFAULT_REALTIME_VOICE = "shimmer";
 export const REALTIME_TRANSCRIBE_MODEL = "gpt-live-transcribe";
 export const REALTIME_TRANSCRIBE_DELAY = "medium";
 

@@ -71,16 +71,17 @@ export const springHover = {
 
 export function useSoftMotion() {
   const reduce = useReducedMotion();
-  const [soft, setSoft] = useState(false);
-  const [ready, setReady] = useState(false);
+  const [{ soft, ready }, setState] = useState({ soft: false, ready: false });
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 767px)");
-    const update = () => setSoft(media.matches);
-    update();
-    setReady(true);
+    const update = () => setState({ soft: media.matches, ready: true });
     media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
+    const frame = window.requestAnimationFrame(update);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      media.removeEventListener("change", update);
+    };
   }, []);
 
   return { reduce: Boolean(reduce), soft, ready };

@@ -17,6 +17,15 @@ import {
   type InterviewPhase,
   type InterviewRuntimeState,
 } from "@/lib/interview/runtime-state";
+import {
+  canAskQuestion,
+  commitCanonicalFact,
+  markQuestionPlanned,
+  MAX_CLARIFICATION_ATTEMPTS,
+  type CanonicalFact,
+} from "@/lib/interview/reasoning-state";
+import { planNextQuestion } from "@/lib/interview/question-planner";
+import { Prisma } from "@prisma/client";
 
 const transcriptLocks = new Map<string, Promise<unknown>>();
 
@@ -91,15 +100,86 @@ function asHistoryTurns(value: unknown): HistoryTurn[] {
   });
 }
 
-function categoryToCoveredField(category: string) {
-  if (category === "volume") return "volume";
-  if (category === "time") return "active_time";
-  if (category === "people") return "people";
-  if (category === "system") return "systems";
-  if (category === "error") return "errors";
-  if (category === "impact") return "consequences";
-  if (category === "pilot") return "pilot";
-  return category;
+function prismaFactStatus(status: CanonicalFact["status"]): FactStatus {
+  if (status === "UNCERTAIN") return FactStatus.UNCERTAIN;
+  if (status === "INFERRED") return FactStatus.INFERRED;
+  if (status === "CONFLICT") return FactStatus.CONFLICT;
+  return FactStatus.CONFIRMED;
+}
+
+async function persistCanonicalFact(
+  interviewId: string,
+  fact: CanonicalFact,
+  evidenceSummary: string | null,
+  processName: string | null,
+) {
+  const data = {
+    category: fact.category,
+    value: fact.value,
+    processName,
+    evidenceSummary,
+    status: prismaFactStatus(fact.status),
+    rawTranscript: fact.rawTranscript ?? null,
+    sourceRole: "user",
+    confidence: fact.confidence ?? (fact.status === "CONFIRMED" ? 1 : 0.4),
+    factKey: fact.key,
+    processKey: fact.processKey ?? null,
+    quantity: (fact.quantity ?? Prisma.JsonNull) as Prisma.InputJsonValue,
+    minValue: fact.quantity?.min ?? null,
+    maxValue: fact.quantity?.max ?? null,
+    unit: fact.quantity?.unit ?? null,
+    period: fact.quantity?.period ?? null,
+    scope: fact.quantity?.scope ?? null,
+    stage: fact.quantity?.stage ?? null,
+  };
+
+    const existing = fact.key
+    ? await prisma.interviewFact.findFirst({
+        where: {
+          interviewId,
+          factKey: fact.key,
+          processKey: fact.processKey ?? null,
+        },
+      })
+    : null;
+
+  if (existing) {
+    await prisma.interviewFact.update({
+      where: { id: existing.id },
+      data,
+    });
+    return;
+  }
+
+  await prisma.interviewFact.create({
+    data: {
+      interviewId,
+      ...data,
+    },
+  });
+}
+
+function finalizeReasoning(state: InterviewRuntimeState) {
+  const planned = planNextQuestion(state);
+  const next = markQuestionPlanned(state, planned);
+  if (
+    planned.reason === "CLARIFICATION" &&
+    planned.questionKey &&
+    (next.questionStates.find((item) => item.key === planned.questionKey)?.clarificationCount ?? 0) >
+      MAX_CLARIFICATION_ATTEMPTS
+  ) {
+    interviewLog("QUESTION_CLARIFICATION_EXHAUSTED", {
+      questionKey: planned.questionKey,
+      phase: next.phase,
+    });
+  }
+  interviewLog("QUESTION_PLANNED", {
+    questionKey: planned.questionKey,
+    reason: planned.reason,
+    phase: next.phase,
+    shouldAsk: planned.shouldAsk,
+  });
+  return { state: next, nextQuestion: planned };
 }
 
 export async function POST(request: NextRequest) {
@@ -202,62 +282,59 @@ export async function POST(request: NextRequest) {
       sourceRole: body.sourceRole === "assistant" ? "assistant" : "user",
     });
 
-    if (!decision.record) {
-      const state = await saveRuntimeState(interview.id, {
-        uncertainFacts: [
-          ...(await loadRuntimeState(interview.id)).uncertainFacts.filter(
-            (fact) => !(fact.category === category && fact.value === value),
-          ),
-          { category, value, processName: processName ?? undefined, status: "UNCERTAIN", rawTranscript: rawTranscript ?? undefined },
-        ],
-      });
-      interviewLog("FACT_CONFIRMATION_REQUIRED", {
+    if (!decision.record && (decision.reason === "EMPTY" || decision.reason === "ASSISTANT_INFERENCE")) {
+      const runtimeState = await loadRuntimeState(interview.id);
+      interviewLog("FACT_REJECTED", {
         interviewId: interview.id,
         category,
         reason: decision.reason,
+        phase: runtimeState.phase,
       });
       return NextResponse.json({
         ok: true,
         recorded: false,
         reason: decision.reason,
-        runtimeState: state,
+        runtimeState,
+        nextQuestion: planNextQuestion(runtimeState),
       });
     }
 
-    const duplicate = await prisma.interviewFact.findFirst({
-      where: { interviewId: interview.id, category, value, processName },
+    const current = await loadRuntimeState(interview.id);
+    const committed = commitCanonicalFact(current, {
+      category,
+      value,
+      processName,
+      status: decision.record ? decision.status : "UNCERTAIN",
+      rawTranscript,
     });
-    if (!duplicate) {
-      await prisma.interviewFact.create({
-        data: {
-          interviewId: interview.id,
-          category,
-          value,
-          processName,
-          evidenceSummary,
-          status: FactStatus.CONFIRMED,
-          rawTranscript,
-          sourceRole: "user",
-          confidence: 1,
-        },
+    const finalized = finalizeReasoning(committed.state);
+    await persistCanonicalFact(interview.id, committed.fact, evidenceSummary, processName);
+    const state = await saveRuntimeState(interview.id, finalized.state, { bumpRevision: true });
+    await recordEvent(interview.id, "tool_call", { tool: "record_key_fact", category, factKey: committed.fact.key });
+    interviewLog(committed.event, {
+      interviewId: interview.id,
+      factKey: committed.fact.key,
+      category,
+      stateRevision: state.stateRevision,
+      phase: state.phase,
+      reason: decision.record ? undefined : decision.reason,
+    });
+    if (committed.fact.status === "CONFIRMED" && !canAskQuestion(state, committed.fact.key)) {
+      interviewLog("QUESTION_SKIPPED_ALREADY_CONFIRMED", {
+        interviewId: interview.id,
+        questionKey: committed.fact.key,
+        stateRevision: state.stateRevision,
+        phase: state.phase,
       });
     }
-    const current = await loadRuntimeState(interview.id);
-    const covered = new Set(current.coveredFields);
-    covered.add(categoryToCoveredField(category));
-    const confirmedFacts = [
-      ...current.confirmedFacts.filter((fact) => !(fact.category === category && fact.value === value)),
-      { category, value, processName: processName ?? undefined, status: "CONFIRMED" as const },
-    ];
-    const state = await saveRuntimeState(interview.id, {
-      confirmedFacts,
-      coveredFields: [...covered],
-      activeProcess: processName || current.activeProcess,
-      phase: processName ? "DEEP_DIVE" : current.phase,
+    return NextResponse.json({
+      ok: true,
+      recorded: Boolean(decision.record && committed.fact.status === "CONFIRMED"),
+      reason: decision.record ? undefined : decision.reason,
+      fact: committed.fact,
+      runtimeState: state,
+      nextQuestion: finalized.nextQuestion,
     });
-    await recordEvent(interview.id, "tool_call", { tool: "record_key_fact", category });
-    interviewLog("FACT_RECORDED", { interviewId: interview.id, category });
-    return NextResponse.json({ ok: true, recorded: true, runtimeState: state });
   }
 
   if (action === "process") {
@@ -268,15 +345,23 @@ export async function POST(request: NextRequest) {
     candidates.push({ name, shortReason });
     const covered = new Set(current.coveredFields);
     covered.add("workflow");
-    const state = await saveRuntimeState(interview.id, {
+    const patched: InterviewRuntimeState = {
+      ...current,
       candidateProcesses: candidates,
       activeProcess: name || current.activeProcess,
       phase: "DEEP_DIVE",
       coveredFields: [...covered],
-    });
+    };
+    const finalized = finalizeReasoning(patched);
+    const state = await saveRuntimeState(interview.id, finalized.state, { bumpRevision: true });
     await recordEvent(interview.id, "tool_call", { tool: "record_process_candidate" });
     interviewLog("TOOL_CALL_COMPLETED", { interviewId: interview.id, tool: "record_process_candidate" });
-    return NextResponse.json({ ok: true, recorded: true, runtimeState: state });
+    return NextResponse.json({
+      ok: true,
+      recorded: true,
+      runtimeState: state,
+      nextQuestion: finalized.nextQuestion,
+    });
   }
 
   if (action === "text") {

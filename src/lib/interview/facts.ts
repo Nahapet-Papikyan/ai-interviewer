@@ -4,6 +4,7 @@ import {
   isNoiseTranscript,
   looksLikeCriticalNumberUtterance,
 } from "@/lib/interview/transcript-quality";
+import { parseQuantity } from "@/lib/interview/quantities";
 import type { FactStatus, RuntimeFact } from "@/lib/interview/runtime-state";
 
 export type RecordFactInput = {
@@ -42,6 +43,9 @@ export function decideRecordKeyFact(input: RecordFactInput): RecordFactDecision 
     }
   }
 
+  if (status === "UNCERTAIN") {
+    return { record: true, status: "UNCERTAIN" };
+  }
   if (status !== "CONFIRMED") {
     return { record: false, reason: "NOT_CONFIRMED" };
   }
@@ -62,6 +66,7 @@ export function isReliableNumericSource(input: {
   return true;
 }
 
+/** First numeric token only. Do not use this for volume/time business math. */
 export function parseLooseNumber(value: string): number | null {
   const match = value.replace(",", ".").match(/-?\d+(?:\.\d+)?/);
   if (!match) return null;
@@ -92,13 +97,19 @@ export function extractLaborSignals(facts: RuntimeFact[]) {
   let people: number | null = null;
 
   for (const fact of facts) {
-    const n = parseLooseNumber(fact.value);
-    if (n == null) continue;
-    if (fact.category === "volume" && /week|շաբաթ/i.test(fact.value)) weeklyVolume = n;
-    if (fact.category === "time" && /hour|ժամ|րոպե|min/i.test(fact.value)) {
-      minutesEach = /hour|ժամ/i.test(fact.value) && !/րոպե|min/i.test(fact.value) ? n * 60 : n;
+    const quantity = fact.quantity ?? parseQuantity(fact.value);
+    if (quantity.min == null) continue;
+    if (fact.category === "volume" && (quantity.period === "week" || /week|շաբաթ/i.test(fact.value))) {
+      weeklyVolume = quantity.min;
     }
-    if (fact.category === "people") people = n;
+    if (fact.category === "time") {
+      const n = quantity.min;
+      minutesEach =
+        quantity.unit === "hour" || (/hour|ժամ/i.test(fact.value) && !/րոպե|min/i.test(fact.value))
+          ? n * 60
+          : n;
+    }
+    if (fact.category === "people") people = quantity.min;
   }
 
   return { weeklyVolume, minutesEach, people };

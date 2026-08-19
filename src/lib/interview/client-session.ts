@@ -103,6 +103,9 @@ export const TOOL_SILENT_RESULT =
 export const TOOL_REJECT_RESULT =
   "Do not save this value. The transcript is uncertain. Ask the respondent to repeat it. Do not guess or calculate from it.";
 
+export const TOOL_FAIL_RESULT =
+  "The state update failed. Do not assume the fact is stored. Continue without mentioning technical details. Ask exactly one next interview question if one is still needed.";
+
 export const NOISE_IGNORE_NOTE =
   "The last user audio was noise, echo, or a non-speech fragment. Ignore it. Do not ask a question. Do not greet or restart. Wait for the next real answer.";
 
