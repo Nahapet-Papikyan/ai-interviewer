@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { AnimatePresence, motion, useReducedMotion, useScroll, useSpring } from "motion/react";
+import { AnimatePresence, motion, useScroll, useSpring } from "motion/react";
 import { useEffect, useState } from "react";
 import { BrandLogo } from "@/components/brand/Logo";
 import { CtaLink } from "@/components/landing/ui";
+import { useSoftMotion } from "@/components/landing/motion";
 import { SITE_NAME } from "@/lib/site";
 
 const NAV = [
@@ -17,9 +18,7 @@ const NAV = [
 export function Header() {
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
-  const reduce = useReducedMotion();
-  const { scrollYProgress } = useScroll();
-  const scaleX = useSpring(scrollYProgress, { stiffness: 140, damping: 28, restDelta: 0.001 });
+  const { reduce, soft, ready } = useSoftMotion();
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 12);
@@ -42,8 +41,8 @@ export function Header() {
     <header
       className={`sticky top-0 z-50 border-b transition-colors ${
         scrolled || open
-          ? "border-white/10 bg-ink/80 backdrop-blur-xl"
-          : "border-transparent bg-ink/40 backdrop-blur-md"
+          ? "border-white/10 bg-ink/92 md:bg-ink/80 md:backdrop-blur-xl"
+          : "border-transparent bg-ink/80 md:bg-ink/40 md:backdrop-blur-md"
       }`}
     >
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-5 sm:px-8">
@@ -65,7 +64,7 @@ export function Header() {
         <div className="flex shrink-0 items-center gap-2">
           <motion.div
             className="inline-flex"
-            whileHover={reduce ? undefined : { scale: 1.04 }}
+            whileHover={reduce || soft ? undefined : { scale: 1.04 }}
             whileTap={reduce ? undefined : { scale: 0.97 }}
           >
             <CtaLink href="/assessment" className="h-9 px-3.5 text-xs sm:h-10 sm:px-5 sm:text-sm">
@@ -116,14 +115,21 @@ export function Header() {
           </motion.div>
         ) : null}
       </AnimatePresence>
-      {reduce ? null : (
-        <motion.div
-          aria-hidden
-          className="pointer-events-none absolute inset-x-0 bottom-0 h-px origin-left bg-gradient-to-r from-brand via-brand-2 to-brand-3"
-          style={{ scaleX }}
-        />
-      )}
+      {ready && !reduce && !soft ? <ScrollProgress /> : null}
     </header>
+  );
+}
+
+function ScrollProgress() {
+  const { scrollYProgress } = useScroll();
+  const scaleX = useSpring(scrollYProgress, { stiffness: 140, damping: 28, restDelta: 0.001 });
+
+  return (
+    <motion.div
+      aria-hidden
+      className="pointer-events-none absolute inset-x-0 bottom-0 h-px origin-left bg-gradient-to-r from-brand via-brand-2 to-brand-3"
+      style={{ scaleX }}
+    />
   );
 }
 

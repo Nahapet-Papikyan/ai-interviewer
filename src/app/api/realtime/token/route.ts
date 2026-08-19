@@ -7,12 +7,13 @@ import { restoreWindow } from "@/lib/interview/messages";
 import { hydrateRuntimeState, shouldConnectRealtime } from "@/lib/interview/runtime-state";
 import { canTransition } from "@/lib/interview/status";
 import { findInterviewByToken, recordEvent, saveRuntimeState, setStatus } from "@/lib/interview/session";
+import { interviewFeatureFlags } from "@/lib/flags";
 import { mintRealtimeClientSecret } from "@/lib/openai/realtime";
 import {
-  REALTIME_TRANSCRIBE_LANGUAGE,
-  REALTIME_TRANSCRIBE_PROMPT,
+  buildTranscriptionKeywords,
   realtimeModel,
   realtimeVoice,
+  sdkInputAudioConfig,
 } from "@/lib/openai/realtime-config";
 import { rateLimit } from "@/lib/rate-limit";
 import { INTERVIEWER_PROMPT_VERSION } from "@/lib/versions";
@@ -99,13 +100,28 @@ export async function POST(request: NextRequest) {
 
   const model = realtimeModel();
   const voice = realtimeVoice();
+  const features = interviewFeatureFlags();
+  const keywords = buildTranscriptionKeywords([
+    interview.company.name,
+    interview.contact.firstName,
+    interview.contact.lastName,
+    interview.company.vertical,
+  ]);
+  const audioInput = sdkInputAudioConfig({
+    createResponse: false,
+    language: interview.language,
+    keywords,
+    interruptResponse: features.nativeInterrupt,
+  });
   const clientSecret = await mintRealtimeClientSecret({
     instructions,
     model,
+    interviewId: interview.id,
     voice,
     createResponse: false,
-    transcribeLanguage: REALTIME_TRANSCRIBE_LANGUAGE,
-    transcribePrompt: REALTIME_TRANSCRIBE_PROMPT,
+    language: interview.language,
+    keywords,
+    interruptResponse: features.nativeInterrupt,
   });
 
   await recordEvent(interview.id, isReconnect ? "realtime_reconnected" : "realtime_connected", {
@@ -144,6 +160,8 @@ export async function POST(request: NextRequest) {
           providerEventId: message.providerEventId,
         })),
     ),
+    features,
+    audioInput,
     interview: {
       id: interview.id,
       status: nextStatus,

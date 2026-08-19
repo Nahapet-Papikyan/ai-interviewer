@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { InterviewStatus } from "@prisma/client";
 import { ChevronLeft } from "lucide-react";
+import { Spinner } from "@/components/shared/spinner";
 import { cn } from "@/lib/utils";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
@@ -36,6 +37,8 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 
 export { FormSelect } from "@/components/shared/form-select";
+export { PendingButton } from "@/components/shared/pending-button";
+export { Spinner } from "@/components/shared/spinner";
 export { Checkbox } from "@/components/ui/checkbox";
 export { Switch } from "@/components/ui/switch";
 export { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -60,9 +63,23 @@ const controlClass =
 export function Button({
   className,
   size = "lg",
+  loading = false,
+  children,
+  disabled,
   ...props
-}: React.ComponentProps<typeof UiButton>) {
-  return <UiButton size={size} className={cn("rounded-full px-4", className)} {...props} />;
+}: React.ComponentProps<typeof UiButton> & { loading?: boolean }) {
+  return (
+    <UiButton
+      size={size}
+      className={cn("rounded-full px-4", className)}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
+      {...props}
+    >
+      {loading ? <Spinner /> : null}
+      {children}
+    </UiButton>
+  );
 }
 
 export function ButtonAnchor({
@@ -268,16 +285,40 @@ export function EmptyState({
 export function DataTable({
   children,
   minWidth,
+  mobile,
 }: {
   children: React.ReactNode;
   minWidth?: number;
+  mobile?: React.ReactNode;
 }) {
   return (
-    <Card className="gap-0 overflow-hidden py-0 ring-foreground/8">
-      <Table className="text-left" style={minWidth ? { minWidth } : undefined}>
-        {children}
-      </Table>
+    <>
+      {mobile ? <div className="space-y-3 md:hidden">{mobile}</div> : null}
+      <Card className={cn("gap-0 overflow-hidden py-0 ring-foreground/8", mobile && "hidden md:block")}>
+        <div className="overflow-x-auto">
+          <Table className="text-left" style={minWidth ? { minWidth } : undefined}>
+            {children}
+          </Table>
+        </div>
+      </Card>
+    </>
+  );
+}
+
+export function ItemCard({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <Card className={cn("gap-0 py-4 ring-foreground/8", className)}>
+      <CardContent className="space-y-3">{children}</CardContent>
     </Card>
+  );
+}
+
+export function ItemCardStat({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-[10px] font-semibold tracking-[0.1em] text-muted-foreground uppercase">{label}</dt>
+      <dd className="mt-1 text-sm font-medium text-foreground">{value}</dd>
+    </div>
   );
 }
 

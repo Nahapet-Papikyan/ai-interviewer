@@ -12,7 +12,7 @@ import {
   ResearchGates,
   ScoreCriteria,
 } from "@/components/admin/ScoreCriteria";
-import { Breadcrumb, Button, ButtonAnchor, Card, CardContent, Eyebrow, FormField, PageHeader, Pill, StatusBadge, Surface, TextArea } from "@/components/shared";
+import { Breadcrumb, ButtonAnchor, Card, CardContent, Eyebrow, FormField, PageHeader, PendingButton, Pill, StatusBadge, Surface, TextArea } from "@/components/shared";
 import { FTE_HOURS_PER_MONTH } from "@/lib/versions";
 
 export default async function InterviewDetailPage({
@@ -280,7 +280,9 @@ export default async function InterviewDetailPage({
               placeholder="Notes for the research team"
             />
           </FormField>
-          <Button type="submit">Mark reviewed</Button>
+          <PendingButton type="submit" loadingText="Saving…">
+            Mark reviewed
+          </PendingButton>
         </Surface>
       </form>
 
@@ -296,9 +298,9 @@ export default async function InterviewDetailPage({
         </p>
         <form action={deleteInterview}>
           <input type="hidden" name="id" value={interview.id} />
-          <Button variant="destructive" type="submit">
+          <PendingButton variant="destructive" type="submit" loadingText="Deleting…">
             Delete interview data
-          </Button>
+          </PendingButton>
         </form>
       </div>
     </div>

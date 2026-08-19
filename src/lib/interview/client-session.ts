@@ -7,7 +7,7 @@ type ConnectionRecord = {
 
 const connections = new Map<string, ConnectionRecord>();
 const openingTriggered = new Set<string>();
-const persistEventIds = new Map<string, Set<string>>();
+const persistEventLengths = new Map<string, Map<string, number>>();
 
 function record(token: string): ConnectionRecord {
   const existing = connections.get(token);
@@ -81,17 +81,18 @@ export function wasOpeningTriggered(token: string): boolean {
   return openingTriggered.has(token);
 }
 
-export function rememberPersistEventId(token: string, eventId: string): boolean {
-  let ids = persistEventIds.get(token);
-  if (!ids) {
-    ids = new Set();
-    persistEventIds.set(token, ids);
+export function rememberPersistEventId(token: string, eventId: string, contentLength = 0): boolean {
+  let lengths = persistEventLengths.get(token);
+  if (!lengths) {
+    lengths = new Map();
+    persistEventLengths.set(token, lengths);
   }
-  if (ids.has(eventId)) return false;
-  ids.add(eventId);
-  if (ids.size > 400) {
-    const first = ids.values().next().value;
-    if (first) ids.delete(first);
+  const previous = lengths.get(eventId);
+  if (previous != null && contentLength <= previous) return false;
+  lengths.set(eventId, contentLength);
+  if (lengths.size > 400) {
+    const first = lengths.keys().next().value;
+    if (first) lengths.delete(first);
   }
   return true;
 }
@@ -112,15 +113,16 @@ export function openingResponseInstructions(input: { language?: string; firstNam
     const greet = name ? `Start with "Hello, ${name}".` : "Greet them without using a name.";
     return `The respondent just enabled the microphone and is listening. Speak first now, in English. ${greet} Briefly introduce yourself as an AI interviewer, thank them, say you want to understand recurring time-consuming processes, it usually takes 15–20 minutes, ask them not to share business secrets or personal customer data, then ask permission to begin. A few short sentences only. Do not wait for them to speak first.`;
   }
+  if (language === "ru" || language.startsWith("ru")) {
+    const greet = name ? `Start with «Здравствуйте, ${name}».` : "Greet them without using a name.";
+    return `The respondent just enabled the microphone and is listening. Speak first now in Russian. ${greet} Briefly introduce yourself as an AI interviewer, thank them, say you want to understand recurring time-consuming processes, it usually takes 15–20 minutes, ask them not to share business secrets or personal customer data, then ask permission to begin. A few short sentences only. Do not wait for them to speak first. Do not switch to Armenian or English unless the respondent does.`;
+  }
   const greet = name ? `Start with «Բարև, ${name}».` : "Greet them without using a name.";
   return `The respondent just enabled the microphone and is listening. Speak first now in Eastern Armenian (արևելահայերեն) as spoken in Yerevan and the Republic of Armenia — not English, not Russian, not Western Armenian. ${greet} Use that given name if provided; never say the word "անուն" or "name". Briefly introduce yourself as an AI interviewer, thank them, say you want to understand recurring time-consuming processes, it usually takes 15–20 minutes, then say they should not share business secrets or personal customer data, and ask «Կարո՞ղ ենք սկսել». Do not say this is a sales call. Do not mention passwords. A few short sentences only. Do not wait for them to speak first.`;
 }
 
-/** @deprecated Use openingResponseInstructions() so the first spoken turn is language-locked. */
-export const OPENING_RESPONSE_INSTRUCTIONS = openingResponseInstructions({ language: "hy" });
-
 export const CONTINUE_RESPONSE_INSTRUCTIONS =
-  "This is a continuation. Do not greet, re-introduce yourself, or ask permission to begin. Stay in the current spoken language (Eastern Armenian unless the respondent switched). Continue from the current topic with one short question only if the last user turn still needs a reply. Otherwise wait.";
+  "This is a continuation. Do not greet, re-introduce yourself, or ask permission to begin. Stay in the current spoken language. Continue from the current topic with one short question only if the last user turn still needs a reply. Otherwise wait.";
 
 export function conversationItemFromTurn(turn: { role: "user" | "assistant"; content: string }) {
   if (turn.role === "user") {

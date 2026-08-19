@@ -57,7 +57,7 @@ export function AssessmentStart() {
           <select
             name="language"
             defaultValue="hy"
-            className="h-11 w-full rounded-xl border border-white/12 bg-ink px-3 text-cloud outline-none"
+            className="h-11 w-full rounded-xl border border-white/12 bg-ink px-3 text-base text-cloud outline-none md:text-sm"
           >
             <option value="hy">Armenian</option>
             <option value="en">English</option>
@@ -103,7 +103,7 @@ function Field({
         required={required}
         autoComplete={autoComplete}
         placeholder={placeholder}
-        className="h-11 w-full rounded-xl border border-white/12 bg-ink px-3 text-cloud outline-none placeholder:text-mist/50"
+        className="h-11 w-full rounded-xl border border-white/12 bg-ink px-3 text-base text-cloud outline-none placeholder:text-mist/50 md:text-sm"
       />
     </label>
   );

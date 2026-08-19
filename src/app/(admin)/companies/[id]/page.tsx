@@ -4,13 +4,13 @@ import { prisma } from "@/lib/db/prisma";
 import { updateCompany } from "../../actions";
 import {
   Breadcrumb,
-  Button,
   ButtonLink,
   Card,
   CardContent,
   Eyebrow,
   FormField,
   PageHeader,
+  PendingButton,
   StatusBadge,
   Surface,
   TextArea,
@@ -74,7 +74,9 @@ export default async function CompanyDetailPage({
                 <TextArea name="hypotheses" rows={4} defaultValue={asLines(company.hypotheses)} />
               </FormField>
             </div>
-            <Button type="submit">Update</Button>
+            <PendingButton type="submit" loadingText="Saving…">
+              Update
+            </PendingButton>
           </Surface>
         </form>
 

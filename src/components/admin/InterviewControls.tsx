@@ -5,14 +5,20 @@ import { Alert, AlertDescription, Button } from "@/components/shared";
 
 export function CopyToken({ token }: { token: string }) {
   const [copied, setCopied] = useState(false);
+  const [copying, setCopying] = useState(false);
   const url =
     typeof window === "undefined"
       ? `/i/${token}`
       : `${window.location.origin}/i/${token}`;
 
   async function copy() {
-    await navigator.clipboard.writeText(url);
-    setCopied(true);
+    setCopying(true);
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+    } finally {
+      setCopying(false);
+    }
   }
 
   return (
@@ -20,7 +26,7 @@ export function CopyToken({ token }: { token: string }) {
       <AlertDescription>
         <p className="text-[11px] font-semibold tracking-[0.12em] text-amber-800 uppercase">Invitation link — shown once</p>
         <p className="mt-2 break-all font-mono text-sm text-foreground">{url}</p>
-        <Button className="mt-3" type="button" onClick={copy}>
+        <Button className="mt-3" type="button" onClick={copy} loading={copying}>
           {copied ? "Copied" : "Copy link"}
         </Button>
       </AlertDescription>
@@ -68,6 +74,7 @@ export function AnalyzeInterviewButton({
       type="button"
       onClick={run}
       disabled={disabled || state === "running"}
+      loading={state === "running"}
     >
       {label}
     </Button>

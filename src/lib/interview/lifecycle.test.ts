@@ -81,7 +81,7 @@ describe("Test C — remount after opening", () => {
 });
 
 describe("Test D — duplicate realtime event", () => {
-  it("persists a provider event id only once", () => {
+  it("persists a provider event id only once at the same length", () => {
     const token = "dup-token";
     assert.equal(rememberPersistEventId(token, "evt_1"), true);
     assert.equal(rememberPersistEventId(token, "evt_1"), false);
@@ -93,6 +93,13 @@ describe("Test D — duplicate realtime event", () => {
       ],
     );
     assert.equal(plan.type, "skip");
+  });
+
+  it("posts again when the same provider event id grows", () => {
+    const token = "grow-token";
+    assert.equal(rememberPersistEventId(token, "evt_grow", 3), true);
+    assert.equal(rememberPersistEventId(token, "evt_grow", 3), false);
+    assert.equal(rememberPersistEventId(token, "evt_grow", 12), true);
   });
 });
 
@@ -262,6 +269,14 @@ describe("language-locked opening", () => {
     const text = openingResponseInstructions({ language: "en", firstName: "Alex" });
     assert.match(text, /Hello, Alex/);
     assert.match(text, /in English/);
+  });
+
+  it("uses Russian only when the interview language is Russian", () => {
+    const text = openingResponseInstructions({ language: "ru", firstName: "Anna" });
+    assert.match(text, /Здравствуйте, Anna/);
+    assert.match(text, /in Russian/);
+    assert.doesNotMatch(text, /Speak first now, in English/);
+    assert.doesNotMatch(text, /արևելահայերեն/);
   });
 });
 

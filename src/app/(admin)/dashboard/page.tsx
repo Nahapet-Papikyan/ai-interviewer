@@ -3,6 +3,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/db/prisma";
 import { FunnelChart } from "@/components/admin/FunnelChart";
 import { AnalyzeInterviewButton } from "@/components/admin/InterviewControls";
+import { InterviewItemCard } from "@/components/admin/InterviewItemCard";
 import {
   ButtonLink,
   DataTable,
@@ -101,7 +102,12 @@ export default async function DashboardPage() {
             action={<ButtonLink href="/contacts">Go to contacts</ButtonLink>}
           />
         ) : (
-          <DataTable minWidth={840}>
+          <DataTable
+            minWidth={840}
+            mobile={interviews.map((interview) => (
+              <InterviewItemCard key={interview.id} interview={interview} />
+            ))}
+          >
             <TableHead>
               <Th>Company</Th>
               <Th>Contact</Th>

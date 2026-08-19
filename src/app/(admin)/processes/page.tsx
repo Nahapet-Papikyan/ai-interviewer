@@ -3,6 +3,8 @@ import {
   DataTable,
   EmptyState,
   Eyebrow,
+  ItemCard,
+  ItemCardStat,
   PageHeader,
   TableHead,
   TableRow,
@@ -90,7 +92,41 @@ export default async function ProcessExplorerPage() {
           description="Run analysis on a completed interview to cluster processes across companies."
         />
       ) : (
-        <DataTable minWidth={860}>
+        <DataTable
+          minWidth={860}
+          mobile={rows.map((row) => (
+            <ItemCard key={row.name}>
+              <p className="font-semibold text-foreground">{row.name}</p>
+              <dl className="grid grid-cols-2 gap-3">
+                <ItemCardStat
+                  label="Companies"
+                  value={
+                    <span className="flex items-center gap-2">
+                      <span className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+                        <span
+                          className="block h-full rounded-full bg-ink"
+                          style={{ width: `${(row.companies / maxCompanies) * 100}%` }}
+                        />
+                      </span>
+                      {row.companies}
+                    </span>
+                  }
+                />
+                <ItemCardStat
+                  label="Median tx/month"
+                  value={row.medianTx != null ? Math.round(row.medianTx).toLocaleString() : "—"}
+                />
+                <ItemCardStat
+                  label="Median hours/month"
+                  value={row.medianHours != null ? Math.round(row.medianHours) : "—"}
+                />
+                <ItemCardStat label="1C" value={`${row.with1c}/${row.total}`} />
+                <ItemCardStat label="Excel" value={`${row.withExcel}/${row.total}`} />
+                <ItemCardStat label="Pilot-ready" value={`${row.pilotReady}/${row.total}`} />
+              </dl>
+            </ItemCard>
+          ))}
+        >
           <TableHead>
             <Th>Cluster</Th>
             <Th>Companies</Th>

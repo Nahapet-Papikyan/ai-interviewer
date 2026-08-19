@@ -1,8 +1,8 @@
 import { InterviewStatus } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { AnalyzeInterviewButton } from "@/components/admin/InterviewControls";
+import { InterviewItemCard } from "@/components/admin/InterviewItemCard";
 import {
-  Button,
   ButtonLink,
   DataTable,
   EmptyState,
@@ -12,6 +12,7 @@ import {
   formatStatus,
   NameCell,
   PageHeader,
+  PendingButton,
   Pill,
   ScoreBar,
   StatusBadge,
@@ -69,9 +70,9 @@ export default async function InterviewsPage({
             items={STATUSES.map((value) => ({ value, label: formatStatus(value) }))}
           />
         </FormField>
-        <Button variant="outline" className="shrink-0" type="submit">
+        <PendingButton variant="outline" className="shrink-0" type="submit" loadingText="Filtering…">
           Filter
-        </Button>
+        </PendingButton>
         {filtered ? (
           <ButtonLink href="/interviews" variant="ghost" size="sm">
             Clear
@@ -85,7 +86,12 @@ export default async function InterviewsPage({
           description={filtered ? "Try a different status or vertical." : "Invite a contact to start the first conversation."}
         />
       ) : (
-        <DataTable minWidth={1180}>
+        <DataTable
+          minWidth={1180}
+          mobile={interviews.map((interview) => (
+            <InterviewItemCard key={interview.id} interview={interview} detail />
+          ))}
+        >
           <TableHead>
             <Th>Company</Th>
             <Th>Contact</Th>

@@ -1,5 +1,5 @@
 import { createCompany } from "../../actions";
-import { Breadcrumb, Button, FormField, PageHeader, Surface, TextArea, TextInput } from "@/components/shared";
+import { Breadcrumb, FormField, PageHeader, PendingButton, Surface, TextArea, TextInput } from "@/components/shared";
 
 export default function NewCompanyPage() {
   return (
@@ -33,7 +33,9 @@ export default function NewCompanyPage() {
               <TextArea name="hypotheses" rows={4} />
             </FormField>
           </div>
-          <Button type="submit">Save</Button>
+          <PendingButton type="submit" loadingText="Saving…">
+            Save
+          </PendingButton>
         </Surface>
       </form>
     </div>

@@ -1,11 +1,14 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db/prisma";
 import {
+  Avatar,
   ButtonLink,
   DataTable,
   EmptyState,
   Eyebrow,
   formatDate,
+  ItemCard,
+  ItemCardStat,
   NameCell,
   PageHeader,
   TableHead,
@@ -37,7 +40,26 @@ export default async function CompaniesPage() {
           action={<ButtonLink href="/companies/new">New company</ButtonLink>}
         />
       ) : (
-        <DataTable>
+        <DataTable
+          mobile={companies.map((company) => (
+            <ItemCard key={company.id}>
+              <div className="flex items-center gap-3">
+                <Avatar name={company.name} />
+                <div className="min-w-0">
+                  <Link href={`/companies/${company.id}`} className="block truncate font-semibold hover:text-primary">
+                    {company.name}
+                  </Link>
+                  <p className="truncate text-xs text-muted-foreground">{company.vertical}</p>
+                </div>
+              </div>
+              <dl className="grid grid-cols-3 gap-3">
+                <ItemCardStat label="Contacts" value={company._count.contacts} />
+                <ItemCardStat label="Interviews" value={company._count.interviews} />
+                <ItemCardStat label="Added" value={formatDate(company.createdAt)} />
+              </dl>
+            </ItemCard>
+          ))}
+        >
           <TableHead>
             <Th>Name</Th>
             <Th>Vertical</Th>

@@ -35,6 +35,7 @@ import {
   previewText,
   summarizeUnknownError,
 } from "@/lib/interview/logging";
+import { interviewCopy } from "@/lib/interview/copy";
 import { restoreWindow } from "@/lib/interview/messages";
 import {
   hydrateRuntimeState,
@@ -44,14 +45,16 @@ import {
 } from "@/lib/interview/runtime-state";
 import { assessTranscriptQuality, isNoiseTranscript, qualitySystemNote } from "@/lib/interview/transcript-quality";
 import { attachProcessedMic } from "@/lib/interview/mic-processing";
+import type { InterviewFeatureFlags } from "@/lib/flags";
 import {
   BARGE_IN_MIN_MS,
   DEFAULT_REALTIME_VOICE,
-  REALTIME_NOISE_REDUCTION,
   REALTIME_RECONNECT,
-  REALTIME_TRANSCRIBE_LANGUAGE,
-  REALTIME_TRANSCRIBE_PROMPT,
-  voiceTurnDetection,
+  elapsedMsBucket,
+  hashDeviceId,
+  sdkInputAudioConfig,
+  shouldDropAsClick,
+  wireInputAudioConfig,
 } from "@/lib/openai/realtime-config";
 
 type Turn = {
@@ -97,38 +100,49 @@ function extractTurns(history: unknown[]): Turn[] {
 }
 
 function mergeTurns(previous: Turn[], incoming: Turn[]): Turn[] {
-  if (incoming.length === 0) return previous;
-  if (previous.length === 0) return incoming;
+  const byId = new Map<string, Turn>();
+  const result: Turn[] = [];
 
-  if (incoming.length >= previous.length) {
-    return incoming.map((turn, index) => {
-      const prior = previous[index];
-      if (!prior || prior.role !== turn.role) return turn;
-      return prior.content.length > turn.content.length ? prior : turn;
-    });
+  function add(turn: Turn) {
+    const id = turn.providerEventId?.trim();
+    if (id) {
+      const existing = byId.get(id);
+      if (existing) {
+        if (turn.content.length >= existing.content.length) {
+          existing.content = turn.content;
+          existing.role = turn.role;
+        }
+        return;
+      }
+      const next = { ...turn, providerEventId: id };
+      byId.set(id, next);
+      result.push(next);
+      return;
+    }
+    if (result.some((item) => !item.providerEventId && item.role === turn.role && item.content === turn.content)) {
+      return;
+    }
+    result.push({ ...turn });
   }
 
-  const next = [...previous];
-  const lastIncoming = incoming[incoming.length - 1];
-  const lastLocal = next[next.length - 1];
-  if (!lastIncoming || !lastLocal) return next;
-  if (lastIncoming.role === lastLocal.role && lastIncoming.content.length > lastLocal.content.length) {
-    next[next.length - 1] = lastIncoming;
-  } else if (
-    lastIncoming.role !== lastLocal.role &&
-    !next.some((turn) => turn.role === lastIncoming.role && turn.content === lastIncoming.content)
-  ) {
-    next.push(lastIncoming);
-  }
-  return next;
+  for (const turn of previous) add(turn);
+  for (const turn of incoming) add(turn);
+  return result;
 }
 
-async function sessionAction(token: string, action: string, extra: Record<string, unknown> = {}) {
+async function sessionAction(
+  token: string,
+  action: string,
+  extra: Record<string, unknown> = {},
+  keepalive = false,
+) {
   const res = await fetch("/api/interviews/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ interviewToken: token, action, ...extra }),
+    keepalive,
   });
+  if (keepalive) return null;
   if (!res.ok) {
     throw new Error("Session update failed");
   }
@@ -149,18 +163,22 @@ function nowMs() {
   return Date.now();
 }
 
-function statusCopy(status: "idle" | "connecting" | "live" | "text" | "ended" | "error") {
+function statusCopy(
+  status: "idle" | "connecting" | "live" | "text" | "ended" | "error",
+  language?: string,
+) {
+  const copy = interviewCopy(language);
   switch (status) {
     case "live":
-      return "Կապը հաստատված է";
+      return copy.live;
     case "connecting":
-      return "Միանում է…";
+      return copy.connecting;
     case "text":
-      return "Տեքստային ռեժիմ";
+      return copy.text;
     case "error":
-      return "Ձայնը չհաջողվեց";
+      return copy.error;
     default:
-      return "Պատրաստ է";
+      return copy.ready;
   }
 }
 
@@ -176,6 +194,7 @@ export function InterviewClient({
   initialRuntime,
   interviewStatus = "CONSENTED",
 }: Props) {
+  const copy = interviewCopy(language);
   const [consented, setConsented] = useState(alreadyConsented);
   const [status, setStatus] = useState<"idle" | "connecting" | "live" | "text" | "ended" | "error">("idle");
   const [error, setError] = useState("");
@@ -217,6 +236,14 @@ export function InterviewClient({
   const speechStartedAtRef = useRef<number | null>(null);
   const micProcessingStopRef = useRef<(() => void) | null>(null);
   const lastRealtimeErrorRef = useRef<unknown>(null);
+  const featuresRef = useRef<InterviewFeatureFlags>({
+    micProcessing: false,
+    nativeInterrupt: false,
+    durationBufferClear: false,
+    textAgent: false,
+    autoAnalysis: false,
+  });
+  const audioKeywordsRef = useRef<string[] | undefined>(undefined);
   const [hadLiveSession, setHadLiveSession] = useState(false);
 
   useEffect(() => {
@@ -288,7 +315,12 @@ export function InterviewClient({
   }
 
   function setVadAutoResponse(enabled: boolean, instructions?: string) {
-    const turn = voiceTurnDetection(enabled);
+    const audio = wireInputAudioConfig({
+      createResponse: enabled,
+      language,
+      keywords: audioKeywordsRef.current,
+      interruptResponse: featuresRef.current.nativeInterrupt,
+    });
     try {
       sessionRef.current?.transport.sendEvent({
         type: "session.update",
@@ -296,22 +328,7 @@ export function InterviewClient({
           type: "realtime",
           ...(instructions ? { instructions } : {}),
           audio: {
-            input: {
-              turn_detection: {
-                type: turn.type,
-                eagerness: turn.eagerness,
-                create_response: turn.createResponse,
-                interrupt_response: turn.interruptResponse,
-              },
-              noise_reduction: {
-                type: REALTIME_NOISE_REDUCTION.type,
-              },
-              transcription: {
-                model: "gpt-live-transcribe",
-                language: REALTIME_TRANSCRIBE_LANGUAGE,
-                prompt: REALTIME_TRANSCRIBE_PROMPT,
-              },
-            },
+            input: audio,
           },
         },
       });
@@ -450,6 +467,7 @@ export function InterviewClient({
       aiSpeaking: aiSpeakingRef.current,
       responseInProgress: responseInProgressRef.current,
     });
+    if (featuresRef.current.nativeInterrupt) return;
     if (!(aiSpeakingRef.current || responseInProgressRef.current)) return;
     if (bargeInTimerRef.current) window.clearTimeout(bargeInTimerRef.current);
     interviewLog("BARGE_IN_ARMED", {
@@ -479,15 +497,16 @@ export function InterviewClient({
       bargeInTimerRef.current = null;
     }
     levelsRef.current.user *= 0.12;
-    const dropped = elapsed > 0 && elapsed < BARGE_IN_MIN_MS;
+    const dropped = shouldDropAsClick(elapsed);
     interviewLog("SPEECH_STOPPED", {
       interviewId: interviewIdRef.current,
       connectionGeneration: generationRef.current,
       elapsedMs: elapsed,
+      elapsedMsBucket: elapsedMsBucket(elapsed),
       droppedAsClick: dropped,
       abortedBargeIn: armed && dropped,
     });
-    if (dropped) {
+    if (dropped && featuresRef.current.durationBufferClear) {
       clearInputAudio();
     }
   }
@@ -654,11 +673,24 @@ export function InterviewClient({
     }
 
     if (next.length === 0 || incoming.length === 0) return;
-    const ids = incoming.map((turn) => turn.providerEventId).filter(Boolean) as string[];
-    if (ids.length && ids.every((id) => !rememberPersistEventId(token, id))) return;
+    let grew = false;
+    for (const turn of incoming) {
+      if (!turn.providerEventId) {
+        if (!unchanged) grew = true;
+        continue;
+      }
+      if (rememberPersistEventId(token, turn.providerEventId, turn.content.length)) grew = true;
+    }
+    if (!grew) return;
     if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
     persistTimerRef.current = window.setTimeout(() => {
-      void sessionAction(token, "history", { turns: latestTurnsRef.current });
+      persistTimerRef.current = null;
+      void sessionAction(token, "history", { turns: latestTurnsRef.current }).catch((err) => {
+        interviewLog("HISTORY_PERSIST_FAILED", {
+          interviewId: interviewIdRef.current,
+          error: summarizeUnknownError(err),
+        });
+      });
     }, 450);
   }
 
@@ -767,7 +799,7 @@ export function InterviewClient({
         mediaStream.getTracks().forEach((track) => track.stop());
         mediaStreamRef.current = null;
         void audioCtx.close();
-        throw new Error("Չհաջողվեց սկսել ձայնային կապը");
+        throw new Error(copy.tokenFailed);
       }
       const data = (await res.json()) as {
         clientSecret: string;
@@ -781,14 +813,24 @@ export function InterviewClient({
         promptVersion?: string;
         promptSource?: string;
         promptHash?: string;
+        features?: InterviewFeatureFlags;
+        audioInput?: ReturnType<typeof sdkInputAudioConfig>;
       };
       if (data.interviewId) interviewIdRef.current = data.interviewId;
+      if (data.features) featuresRef.current = data.features;
+      audioKeywordsRef.current = data.audioInput?.transcription.keywords;
       if (data.runtimeState) {
         runtimeRef.current = hydrateRuntimeState(data.runtimeState, data.recentTurns ?? latestTurnsRef.current);
       }
       const restoredTurns = restoreWindow(data.recentTurns?.length ? data.recentTurns : latestTurnsRef.current);
       const voice = data.voice || DEFAULT_REALTIME_VOICE;
-      const turn = voiceTurnDetection(false);
+      const audioInput =
+        data.audioInput ??
+        sdkInputAudioConfig({
+          createResponse: false,
+          language,
+          interruptResponse: featuresRef.current.nativeInterrupt,
+        });
       const triggerOpening = shouldTriggerOpening({
         openingDelivered: runtimeRef.current.openingDelivered || wasOpeningTriggered(token),
         completed: runtimeRef.current.completed,
@@ -837,26 +879,48 @@ export function InterviewClient({
 
       let sendStream = mediaStream;
       let usedProcessedMic = false;
-      try {
-        const processed = attachProcessedMic(audioCtx, mediaStream);
-        micProcessingStopRef.current?.();
-        micProcessingStopRef.current = processed.stop;
-        sendStream = processed.stream;
-        usedProcessedMic = true;
-      } catch (err) {
-        micProcessingStopRef.current = null;
-        interviewLog("MIC_PROCESSING_FALLBACK", {
-          interviewId: interviewIdRef.current,
-          connectionGeneration: generation,
-          error: summarizeUnknownError(err),
-        });
+      if (featuresRef.current.micProcessing) {
+        try {
+          const processed = attachProcessedMic(audioCtx, mediaStream);
+          micProcessingStopRef.current?.();
+          micProcessingStopRef.current = processed.stop;
+          sendStream = processed.stream;
+          usedProcessedMic = true;
+        } catch (err) {
+          micProcessingStopRef.current = null;
+          interviewLog("MIC_PROCESSING_FALLBACK", {
+            interviewId: interviewIdRef.current,
+            connectionGeneration: generation,
+            error: summarizeUnknownError(err),
+          });
+        }
       }
+      const trackSettings = mediaStream.getAudioTracks()[0]?.getSettings() ?? {};
+      const deviceIdHash =
+        typeof trackSettings.deviceId === "string" ? hashDeviceId(trackSettings.deviceId) : null;
       interviewLog("MIC_STREAM_READY", {
         interviewId: interviewIdRef.current,
         connectionGeneration: generation,
         processed: usedProcessedMic,
         sendTracks: sendStream.getAudioTracks().length,
+        echoCancellation: trackSettings.echoCancellation ?? null,
+        noiseSuppression: trackSettings.noiseSuppression ?? null,
+        autoGainControl: trackSettings.autoGainControl ?? null,
+        sampleRate: trackSettings.sampleRate ?? null,
+        channelCount: trackSettings.channelCount ?? null,
+        deviceIdHash,
       });
+      void sessionAction(token, "telemetry", {
+        settings: {
+          echoCancellation: trackSettings.echoCancellation ?? null,
+          noiseSuppression: trackSettings.noiseSuppression ?? null,
+          autoGainControl: trackSettings.autoGainControl ?? null,
+          sampleRate: trackSettings.sampleRate ?? null,
+          channelCount: trackSettings.channelCount ?? null,
+          deviceIdHash,
+          processedMic: usedProcessedMic,
+        },
+      }).catch(() => undefined);
 
       let remoteTapped = false;
       const transport = new OpenAIRealtimeWebRTC({
@@ -898,22 +962,7 @@ export function InterviewClient({
           outputModalities: ["audio"],
           voice,
           audio: {
-            input: {
-              turnDetection: {
-                type: turn.type,
-                eagerness: turn.eagerness,
-                createResponse: false,
-                interruptResponse: turn.interruptResponse,
-              },
-              noiseReduction: {
-                type: REALTIME_NOISE_REDUCTION.type,
-              },
-              transcription: {
-                model: "gpt-live-transcribe",
-                language: REALTIME_TRANSCRIBE_LANGUAGE,
-                prompt: REALTIME_TRANSCRIBE_PROMPT,
-              },
-            },
+            input: audioInput,
             output: {
               voice,
             },
@@ -922,7 +971,13 @@ export function InterviewClient({
       });
       session.on("history_updated", (history) => {
         if (!alive(generation)) return;
-        persistHistory(history as unknown[]).catch(() => undefined);
+        persistHistory(history as unknown[]).catch((err) => {
+          interviewLog("HISTORY_PERSIST_FAILED", {
+            interviewId: interviewIdRef.current,
+            connectionGeneration: generation,
+            error: summarizeUnknownError(err),
+          });
+        });
       });
       session.on("error", (error) => {
         if (!alive(generation)) {
@@ -1064,6 +1119,7 @@ export function InterviewClient({
         }
       });
       await session.connect({ apiKey: data.clientSecret });
+      reconnects.current = 0;
       interviewLog("SESSION_CONNECT_OK", {
         interviewId: interviewIdRef.current,
         connectionGeneration: generation,
@@ -1219,7 +1275,7 @@ export function InterviewClient({
         connectionGeneration: generation,
         error: summarizeUnknownError(err),
       });
-      setError(err instanceof Error ? err.message : "Կապը չհաջողվեց");
+      setError(err instanceof Error ? err.message : copy.connectFailed);
       setStatus("error");
     } finally {
       connectingRef.current = false;
@@ -1253,7 +1309,7 @@ export function InterviewClient({
         connectionGeneration: generationRef.current,
       });
       setStatus("text");
-      setError("Ձայնային կապը ընդհատվեց։ Կարող եք շարունակել տեքստով։");
+      setError(copy.reconnectText);
       return;
     }
     const attempt = reconnects.current;
@@ -1345,7 +1401,24 @@ export function InterviewClient({
 
   useEffect(() => {
     cancelConnectionTeardown(token);
+    function flushHidden() {
+      if (persistTimerRef.current) {
+        window.clearTimeout(persistTimerRef.current);
+        persistTimerRef.current = null;
+      }
+      const turnsToFlush = latestTurnsRef.current;
+      if (!turnsToFlush.length || endingRef.current) return;
+      void sessionAction(token, "history", { turns: turnsToFlush }, true);
+      flushClientTraces();
+    }
+    function onVisibility() {
+      if (document.visibilityState === "hidden") flushHidden();
+    }
+    window.addEventListener("pagehide", flushHidden);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
+      window.removeEventListener("pagehide", flushHidden);
+      document.removeEventListener("visibilitychange", onVisibility);
       if (persistTimerRef.current) window.clearTimeout(persistTimerRef.current);
       scheduleConnectionTeardown(token);
     };
@@ -1366,22 +1439,21 @@ export function InterviewClient({
         />
         <div className="relative">
           <BrandLogo size={72} priority className="mb-6" />
-          <p className="text-[11px] font-semibold tracking-[0.18em] text-brand uppercase">{companyName}</p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-cloud">Բարև, {firstName}</h1>
+          <p className="text-[11px] font-semibold tracking-[0.18em] text-brand uppercase">
+            {companyName || copy.consentEyebrowFallback}
+          </p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-cloud">{copy.consentTitle(firstName)}</h1>
           <div className="mt-6 space-y-3 text-[15px] leading-7 text-mist">
-            <p>
-              Սա արհեստական բանականությամբ աշխատող հարցազրույց է՝ հասկանալու կրկնվող
-              գործընթացները, որոնք ժամանակ են խլում {companyName}-ում։
-            </p>
-            <p>Սովորաբար տևում է 15–20 րոպե։ Դուք նշված եք որպես {role}։</p>
+            <p>{copy.consentIntro(companyName)}</p>
+            <p>{copy.consentDuration(role)}</p>
             <ul className="space-y-2 rounded-2xl border border-white/10 bg-ink-2 p-4 text-sm text-cloud/90">
-              <li>Պահվում է խոսակցության տեքստը և կառուցվածքային եզրակացությունները։</li>
-              <li>Հում աուդիո չի պահվում։</li>
-              <li>Խնդրում ենք չկիսել բիզնեսի գաղտնիքներ կամ հաճախորդների անձնական տվյալներ։</li>
+              <li>{copy.consentStore}</li>
+              <li>{copy.consentNoAudio}</li>
+              <li>{copy.consentSecrets}</li>
             </ul>
           </div>
           <Button className="mt-8 h-11 px-5" type="button" onClick={acceptConsent}>
-            Համաձայն եմ և սկսել
+            {copy.consentButton}
           </Button>
         </div>
       </div>
@@ -1392,13 +1464,13 @@ export function InterviewClient({
     return (
       <div className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-6 py-16">
         <BrandLogo size={72} className="mb-6" />
-        <h1 className="text-3xl font-semibold tracking-tight text-cloud">Շնորհակալություն, {firstName}</h1>
-        <p className="mt-3 text-[15px] leading-7 text-mist">Հարցազրույցն ավարտված է։ Կարող եք փակել այս էջը։</p>
+        <h1 className="text-3xl font-semibold tracking-tight text-cloud">{copy.thanksTitle(firstName)}</h1>
+        <p className="mt-3 text-[15px] leading-7 text-mist">{copy.thanksBody}</p>
       </div>
     );
   }
 
-  const meta = statusCopy(status);
+  const meta = statusCopy(status, language);
   const visibleTurns = turns.filter((turn) => turn.role === "user" || turn.role === "assistant");
   const lastTurn = visibleTurns[visibleTurns.length - 1];
   const showAiLiveDots = status === "live" && aiSpeaking && lastTurn?.role !== "assistant";
@@ -1427,7 +1499,7 @@ export function InterviewClient({
               />
               <span>{meta}</span>
               <span className="text-white/20">·</span>
-              <span>հայերեն</span>
+              <span>{copy.languageName}</span>
             </div>
           </div>
         </div>
@@ -1439,7 +1511,7 @@ export function InterviewClient({
             onClick={endInterview}
             disabled={showMicGate}
           >
-            Ավարտել
+            {copy.end}
           </Button>
         </div>
       </header>
@@ -1457,6 +1529,7 @@ export function InterviewClient({
             userMuted={userMuted}
             aiSpeaking={aiSpeaking}
             listeningOpen={listeningOpen}
+            language={language}
             levelsRef={levelsRef}
             onToggleMic={status === "live" ? toggleUserMic : undefined}
             onStart={status === "idle" || status === "error" ? () => void connectVoice() : undefined}
@@ -1475,7 +1548,7 @@ export function InterviewClient({
               <div key={`${turn.role}-${index}`} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
                 <div className={`max-w-[85%] ${isUser ? "items-end" : "items-start"} flex flex-col gap-1`}>
                   <span className="px-1 text-[11px] font-medium uppercase tracking-wide text-mist">
-                    {isUser ? firstName : "Հարցազրուցավար"}
+                    {isUser ? firstName : copy.interviewer}
                   </span>
                   <div
                     className={`rounded-2xl px-3.5 py-2.5 text-[15px] leading-6 ${
@@ -1490,7 +1563,7 @@ export function InterviewClient({
                     {isLiveAssistant ? (
                       <span className="mt-2 flex items-center gap-2 text-xs font-medium text-brand">
                         <SpeakingDots />
-                        խոսում է
+                        {copy.speaking}
                       </span>
                     ) : null}
                   </div>
@@ -1501,7 +1574,7 @@ export function InterviewClient({
           {showAiLiveDots ? (
             <div className="flex justify-start">
               <div className="flex flex-col gap-1">
-                <span className="px-1 text-[11px] font-medium uppercase tracking-wide text-mist">Հարցազրուցավար</span>
+                <span className="px-1 text-[11px] font-medium uppercase tracking-wide text-mist">{copy.interviewer}</span>
                 <div className="rounded-2xl rounded-bl-md border border-brand/35 bg-brand/10 px-3.5 py-3">
                   <SpeakingDots />
                 </div>
@@ -1522,17 +1595,18 @@ export function InterviewClient({
           className="min-h-11 h-11 flex-1 rounded-full border-white/12 bg-ink-2 px-4 py-2.5 text-[15px] text-cloud placeholder:text-mist/70 focus-visible:border-brand/50"
           value={textInput}
           onChange={(event) => setTextInput(event.target.value)}
-          placeholder="Գրեք այստեղ, եթե ձայնը հասանելի չէ"
+          placeholder={copy.placeholder}
           disabled={showMicGate}
         />
         <Button className="h-11" type="submit" disabled={showMicGate}>
-          Ուղարկել
+          {copy.send}
         </Button>
       </form>
 
       {showMicGate ? (
         <MicPermissionModal
           firstName={firstName}
+          language={language}
           connecting={status === "connecting"}
           denied={micDenied}
           unavailable={micUnavailable}

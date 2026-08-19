@@ -12,8 +12,9 @@ The ChatGPT plugin form needs an **MCP server URL**, not the site root and not t
 
 **MCP URL:** `https://www.bussnes-research.am/api/mcp`
 
-Authentication in the ChatGPT form: **None**.  
-`INGEST_API_KEY` stays on the server. ChatGPT never sends it.
+Authentication in the ChatGPT form: **Bearer token**. Use the same `INGEST_API_KEY` as REST.
+
+Send `Authorization: Bearer <INGEST_API_KEY>` on every MCP POST. Unauthenticated POSTs return 401. If the key is unset on the server, POSTs return 503.
 
 Tool: `createInterviewInvitation`
 

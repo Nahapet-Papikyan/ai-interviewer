@@ -4,10 +4,10 @@ import { createInvitation, updateContact } from "../../actions";
 import { notFound } from "next/navigation";
 import {
   Breadcrumb,
-  Button,
   Card,
   FormField,
   PageHeader,
+  PendingButton,
   StatusBadge,
   Surface,
   TextInput,
@@ -66,7 +66,9 @@ export default async function ContactDetailPage({
               <TextInput name="phone" defaultValue={contact.phone ?? ""} />
             </FormField>
           </div>
-          <Button type="submit">Update</Button>
+          <PendingButton type="submit" loadingText="Saving…">
+            Update
+          </PendingButton>
         </Surface>
       </form>
 
@@ -77,7 +79,9 @@ export default async function ContactDetailPage({
           <p className="text-sm text-muted-foreground">
             Generates an opaque /i/token link. The plaintext token is shown once.
           </p>
-          <Button type="submit">Create invitation</Button>
+          <PendingButton type="submit" loadingText="Creating…">
+            Create invitation
+          </PendingButton>
         </Surface>
       </form>
 

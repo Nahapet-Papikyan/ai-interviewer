@@ -3,9 +3,11 @@
 import { useEffect } from "react";
 import { BrandLogo } from "@/components/brand/Logo";
 import { Button } from "@/components/shared";
+import { interviewCopy } from "@/lib/interview/copy";
 
 type Props = {
   firstName: string;
+  language?: string;
   connecting: boolean;
   denied: boolean;
   unavailable: boolean;
@@ -15,12 +17,15 @@ type Props = {
 
 export function MicPermissionModal({
   firstName,
+  language,
   connecting,
   denied,
   unavailable,
   sessionError,
   onEnable,
 }: Props) {
+  const copy = interviewCopy(language);
+
   useEffect(() => {
     const previous = document.body.style.overflow;
     document.body.style.overflow = "hidden";
@@ -37,7 +42,7 @@ export function MicPermissionModal({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const copy = content({ firstName, connecting, denied, unavailable, sessionError });
+  const content = modalContent({ firstName, connecting, denied, unavailable, sessionError, copy });
 
   return (
     <div
@@ -59,84 +64,81 @@ export function MicPermissionModal({
           ))}
         </div>
         <h2 id="mic-modal-title" className="text-center text-xl font-semibold tracking-tight text-cloud">
-          {copy.title}
+          {content.title}
         </h2>
         <p id="mic-modal-copy" className="mt-3 text-center text-sm leading-6 text-mist">
-          {copy.body}
+          {content.body}
         </p>
-        {denied ? <PermissionSteps /> : null}
+        {denied ? <PermissionSteps language={language} /> : null}
         <Button className="mt-6 h-12 w-full" type="button" onClick={onEnable} disabled={connecting}>
-          {copy.action}
+          {content.action}
         </Button>
-        {connecting ? (
-          <p className="mt-3 text-center text-xs leading-5 text-mist">
-            Զննարկիչը հարցնում է վերևում։ Սեղմեք Allow, որպեսզի շարունակեք։
-          </p>
-        ) : (
-          <p className="mt-3 text-center text-xs leading-5 text-mist">
-            Խոսափողը միայն հարցազրույցի ընթացքում է օգտագործվում։ Հում ձայն չի պահվում։
-          </p>
-        )}
+        <p className="mt-3 text-center text-xs leading-5 text-mist">
+          {connecting ? copy.micConnectingHint : copy.micHint}
+        </p>
       </div>
     </div>
   );
 }
 
-function content({
+function modalContent({
   firstName,
   connecting,
   denied,
   unavailable,
   sessionError,
+  copy,
 }: {
   firstName: string;
   connecting: boolean;
   denied: boolean;
   unavailable: boolean;
   sessionError?: string;
+  copy: ReturnType<typeof interviewCopy>;
 }) {
   if (connecting) {
     return {
-      title: "Թույլատրեք խոսափողը",
-      body: "Սեղմեք Allow զննարկչի հարցման վրա։ Մինչև խոսափողը միացված չէ, հարցազրույցը չի սկսվի։",
-      action: "Սպասում է թույլտվության…",
+      title: copy.micConnectingTitle,
+      body: copy.micConnectingBody,
+      action: copy.micConnectingAction,
     };
   }
   if (denied) {
     return {
-      title: "Խոսափողը արգելափակված է",
-      body: "Զննարկիչը արգելել է խոսափողը այս կայքի համար։ Թույլատրեք այն կայքի կարգավորումներում, ապա սեղմեք կրկին փորձել։",
-      action: "Կրկին փորձել",
+      title: copy.micDeniedTitle,
+      body: copy.micDeniedBody,
+      action: copy.micRetry,
     };
   }
   if (unavailable) {
     return {
-      title: "Խոսափող չի գտնվել",
-      body: "Միացրեք խոսափողը սարքին կամ ստուգեք, որ այն չի օգտագործվում այլ հավելվածում, ապա կրկին փորձեք։",
-      action: "Կրկին փորձել",
+      title: copy.micUnavailableTitle,
+      body: copy.micUnavailableBody,
+      action: copy.micRetry,
     };
   }
   if (sessionError) {
     return {
-      title: "Ձայնային կապը չհաջողվեց",
+      title: copy.micSessionErrorTitle,
       body: sessionError,
-      action: "Կրկին փորձել",
+      action: copy.micRetry,
     };
   }
   return {
-    title: `Միացրեք խոսափողը, ${firstName}`,
-    body: "Հարցազրույցը ձայնային է։ Սեղմեք կոճակը և թույլատրեք խոսափողը, որպեսզի կարողանանք սկսել։",
-    action: "Միացնել խոսափողը",
+    title: copy.micEnableTitle(firstName),
+    body: copy.micEnableBody,
+    action: copy.micEnableAction,
   };
 }
 
-function PermissionSteps() {
+function PermissionSteps({ language }: { language?: string }) {
+  const copy = interviewCopy(language);
   return (
     <ol className="mt-5 space-y-2 rounded-2xl border border-white/10 bg-ink p-4 text-left text-sm leading-6 text-mist">
-      <li>1. Սեղմեք կողպեքի կամ խոսափողի նշանը հասցեի տողում։</li>
-      <li>2. Բացեք կայքի կարգավորումները և գտեք Microphone։</li>
-      <li>3. Ընտրեք Allow, ապա վերադարձեք այստեղ և սեղմեք կրկին փորձել։</li>
-      <li>4. iPhone-ում՝ Settings → Safari → Microphone, ապա թարմացրեք էջը։</li>
+      <li>{copy.micStep1}</li>
+      <li>{copy.micStep2}</li>
+      <li>{copy.micStep3}</li>
+      <li>{copy.micStep4}</li>
     </ol>
   );
 }

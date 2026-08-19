@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, type MutableRefObject } from "react";
+import { interviewCopy } from "@/lib/interview/copy";
 
 export type VoiceLevels = { user: number; ai: number };
 export type VoiceSessionMode = "idle" | "connecting" | "live";
@@ -12,6 +13,7 @@ type Props = {
   userMuted: boolean;
   aiSpeaking?: boolean;
   listeningOpen?: boolean;
+  language?: string;
   levelsRef: MutableRefObject<VoiceLevels>;
   onToggleMic?: () => void;
   onStart?: () => void;
@@ -23,13 +25,15 @@ function caption(
   speaker: Speaker,
   aiSpeaking: boolean,
   listeningOpen: boolean,
+  language?: string,
 ) {
-  if (mode === "connecting") return "Թույլատրեք խոսափողը զննարկչում";
-  if (mode !== "live") return "Սեղմեք՝ խոսափողը միացնելու համար";
-  if (aiSpeaking || speaker === "ai") return "Հարցազրուցավարը խոսում է";
-  if (userMuted || !listeningOpen) return "Սեղմեք՝ խոսափողը միացնելու համար";
-  if (speaker === "user") return "Դուք եք խոսում";
-  return "Լսում է Ձեզ";
+  const copy = interviewCopy(language);
+  if (mode === "connecting") return copy.orbConnecting;
+  if (mode !== "live") return copy.orbIdle;
+  if (aiSpeaking || speaker === "ai") return copy.orbAiSpeaking;
+  if (userMuted || !listeningOpen) return copy.orbEnableMic;
+  if (speaker === "user") return copy.orbYouSpeaking;
+  return copy.orbListening;
 }
 
 export function VoiceOrb({
@@ -37,6 +41,7 @@ export function VoiceOrb({
   userMuted,
   aiSpeaking = false,
   listeningOpen = false,
+  language = "hy",
   levelsRef,
   onToggleMic,
   onStart,
@@ -47,11 +52,15 @@ export function VoiceOrb({
   const mutedRef = useRef(userMuted);
   const aiSpeakingRef = useRef(aiSpeaking);
   const listeningRef = useRef(listeningOpen);
+  const languageRef = useRef(language);
 
-  modeRef.current = mode;
-  mutedRef.current = userMuted;
-  aiSpeakingRef.current = aiSpeaking;
-  listeningRef.current = listeningOpen;
+  useEffect(() => {
+    modeRef.current = mode;
+    mutedRef.current = userMuted;
+    aiSpeakingRef.current = aiSpeaking;
+    listeningRef.current = listeningOpen;
+    languageRef.current = language;
+  }, [mode, userMuted, aiSpeaking, listeningOpen, language]);
 
   const clickable = mode === "idle" ? Boolean(onStart) : Boolean(onToggleMic) && listeningOpen && !aiSpeaking;
   const showEnableHint = mode === "idle" || (mode === "live" && (userMuted || !listeningOpen) && !aiSpeaking);
@@ -190,6 +199,7 @@ export function VoiceOrb({
         speaker,
         aiSpeakingRef.current,
         listeningRef.current,
+        languageRef.current,
       );
       if (captionRef.current && nextCaption !== lastCaption) {
         captionRef.current.textContent = nextCaption;
@@ -328,7 +338,7 @@ export function VoiceOrb({
         ) : null}
       </button>
       <p ref={captionRef} className="mt-1 text-center text-xs font-medium text-mist">
-        {caption(mode, userMuted, "none", aiSpeaking, listeningOpen)}
+        {caption(mode, userMuted, "none", aiSpeaking, listeningOpen, language)}
       </p>
     </div>
   );

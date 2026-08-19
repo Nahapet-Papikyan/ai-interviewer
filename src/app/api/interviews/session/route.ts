@@ -37,6 +37,7 @@ async function upsertTranscript(interviewId: string, turns: HistoryTurn[], sourc
   if (turns.length === 0) return;
   await withInterviewLock(interviewId, () =>
     prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${interviewId}))`;
       const existing = await tx.interviewMessage.findMany({
         where: { interviewId },
         orderBy: { sequenceNo: "asc" },
@@ -112,6 +113,23 @@ export async function POST(request: NextRequest) {
   const interview = await findInterviewByToken(interviewToken);
   if (!interview) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  if (action === "telemetry") {
+    const settings =
+      body.settings && typeof body.settings === "object" && !Array.isArray(body.settings)
+        ? (body.settings as Record<string, unknown>)
+        : {};
+    await recordEvent(interview.id, "audio_settings", {
+      echoCancellation: settings.echoCancellation ?? null,
+      noiseSuppression: settings.noiseSuppression ?? null,
+      autoGainControl: settings.autoGainControl ?? null,
+      sampleRate: settings.sampleRate ?? null,
+      channelCount: settings.channelCount ?? null,
+      deviceIdHash: typeof settings.deviceIdHash === "string" ? settings.deviceIdHash : null,
+      processedMic: Boolean(settings.processedMic),
+    });
+    return NextResponse.json({ ok: true });
   }
 
   if (action === "consent") {

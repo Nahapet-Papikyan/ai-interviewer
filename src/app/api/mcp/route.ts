@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { handleMcpMessage } from "@/lib/mcp/server";
+import { requireIngestApiKey } from "@/lib/ingest-auth";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -44,6 +45,11 @@ export async function DELETE() {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = requireIngestApiKey(request);
+  if (!auth.ok) {
+    return withCors(NextResponse.json({ error: auth.error }, { status: auth.status }));
+  }
+
   const origin = request.nextUrl.origin;
   const incomingSession = request.headers.get("mcp-session-id") ?? undefined;
   const payload = await request.json().catch(() => null);

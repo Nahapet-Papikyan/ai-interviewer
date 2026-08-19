@@ -31,14 +31,8 @@ jobs:
           fi
           bash .github/scripts/check-vercel-ids.sh
 
-      - name: Align commit author for Vercel Hobby
-        run: |
-          git config user.name "${GITHUB_ACTOR}"
-          git config user.email "${GITHUB_ACTOR_ID}+${GITHUB_ACTOR}@users.noreply.github.com"
-          git commit --amend --no-edit --reset-author
-
       - name: Install Vercel CLI
-        run: npm install --global vercel@latest
+        run: npm install --global vercel@48.5.0
 
       - name: Pull Vercel environment
         run: vercel pull --yes --environment=production

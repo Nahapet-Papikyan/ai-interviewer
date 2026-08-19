@@ -1,16 +1,18 @@
 "use client";
 
-import { motion, useReducedMotion } from "motion/react";
-import { fadeUp, inView, scaleIn, stagger } from "@/components/landing/motion";
+import { motion } from "motion/react";
+import { fadeUp, inView, scaleIn, stagger, useSoftMotion } from "@/components/landing/motion";
 
 function Node({
   label,
   hint,
   tone = "default",
+  soft = false,
 }: {
   label: string;
   hint?: string;
   tone?: "default" | "ai" | "human" | "done";
+  soft?: boolean;
 }) {
   const tones = {
     default: "border-white/12 bg-ink-3",
@@ -21,7 +23,7 @@ function Node({
 
   return (
     <motion.div
-      variants={scaleIn}
+      variants={soft ? fadeUp : scaleIn}
       className={`w-full rounded-2xl border px-4 py-3 text-center ${tones[tone]}`}
     >
       <p className="text-sm font-medium text-cloud">{label}</p>
@@ -39,7 +41,7 @@ function Rail({ delay = "0s" }: { delay?: string }) {
 }
 
 export function WorkflowDemo() {
-  const reduce = useReducedMotion();
+  const { reduce, soft } = useSoftMotion();
 
   return (
     <div className="relative mx-auto w-full max-w-[380px]">
@@ -52,22 +54,22 @@ export function WorkflowDemo() {
         initial={reduce ? false : "hidden"}
         whileInView="show"
         viewport={inView}
-        variants={stagger(0.08, 0.12)}
-        whileHover={reduce ? undefined : { y: -4 }}
-        transition={{ type: "spring", stiffness: 260, damping: 22 }}
+        variants={stagger(soft ? 0.05 : 0.08, soft ? 0.04 : 0.12)}
+        whileHover={reduce || soft ? undefined : { y: -4 }}
+        transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
       >
         <motion.div variants={fadeUp} className="mb-4 flex items-center justify-between text-[11px] text-mist">
           <span>Incoming work</span>
           <span className="rounded-full border border-white/10 px-2 py-0.5 text-cloud/80">Live flow</span>
         </motion.div>
-        <motion.div className="flex flex-col items-center" variants={stagger(0.07, 0)}>
-          <Node label="Email" />
+        <motion.div className="flex flex-col items-center" variants={stagger(soft ? 0.04 : 0.07, 0)}>
+          <Node label="Email" soft={soft} />
           <Rail />
-          <Node label="Understand document" hint="AI" tone="ai" />
+          <Node label="Understand document" hint="AI" tone="ai" soft={soft} />
           <Rail delay="0.4s" />
-          <Node label="Validate data" />
+          <Node label="Validate data" soft={soft} />
           <Rail delay="0.8s" />
-          <Node label="Decision" />
+          <Node label="Decision" soft={soft} />
           <motion.div variants={fadeUp} className="relative w-full pt-8">
             <svg
               className="pointer-events-none absolute inset-x-[18%] top-0 h-8"
@@ -79,12 +81,12 @@ export function WorkflowDemo() {
               <path d="M100 0 V8 C100 22 172 22 172 32" className="landing-dash" stroke="#8338EC" strokeWidth="1.2" />
             </svg>
             <div className="grid w-full grid-cols-2 gap-3">
-              <Node label="ERP" />
-              <Node label="Human review" hint="Exception" tone="human" />
+              <Node label="ERP" soft={soft} />
+              <Node label="Human review" hint="Exception" tone="human" soft={soft} />
             </div>
           </motion.div>
           <Rail delay="1.2s" />
-          <Node label="Complete" tone="done" />
+          <Node label="Complete" tone="done" soft={soft} />
         </motion.div>
       </motion.div>
     </div>

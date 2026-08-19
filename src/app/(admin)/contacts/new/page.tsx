@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { createContact } from "../../actions";
-import { Breadcrumb, Button, FormField, FormSelect, PageHeader, Surface, TextInput } from "@/components/shared";
+import { Breadcrumb, FormField, FormSelect, PageHeader, PendingButton, Surface, TextInput } from "@/components/shared";
 
 export default async function NewContactPage({
   searchParams,
@@ -47,7 +47,9 @@ export default async function NewContactPage({
               <TextInput name="phone" />
             </FormField>
           </div>
-          <Button type="submit">Save</Button>
+          <PendingButton type="submit" loadingText="Saving…">
+            Save
+          </PendingButton>
         </Surface>
       </form>
     </div>

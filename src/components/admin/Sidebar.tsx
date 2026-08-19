@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { BrandLogo } from "@/components/brand/Logo";
 import { Button } from "@/components/shared";
@@ -35,11 +35,12 @@ function isActive(pathname: string, href: string) {
 
 export function AdminSidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const [open, setOpen] = useState(false);
 
   async function logout() {
     await fetch("/api/admin/logout", { method: "POST" });
-    window.location.href = "/login";
+    router.push("/login");
   }
 
   return (

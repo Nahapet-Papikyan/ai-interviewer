@@ -344,6 +344,18 @@ input, textarea, select, button {
   animation: landing-node 2.8s ease-in-out infinite;
 }
 
+@media (max-width: 767px) {
+  .landing-packet,
+  .landing-dash,
+  .landing-node-live {
+    animation: none !important;
+  }
+
+  .landing-wave {
+    animation-duration: 1.8s;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .landing-pre,
   .landing-in {

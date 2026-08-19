@@ -11,17 +11,33 @@ export type StoredMessage = {
   providerEventId?: string | null;
 };
 
+function contentKey(role: string, content: string) {
+  return `${role}\u0000${content}`;
+}
+
 export function normalizeTurns(turns: HistoryTurn[]): HistoryTurn[] {
   const cleaned: HistoryTurn[] = [];
-  const seenIds = new Set<string>();
+  const indexById = new Map<string, number>();
+
   for (const turn of turns) {
     const content = turn.content.trim();
     if (!content) continue;
     const providerEventId = turn.providerEventId?.trim() || null;
+
     if (providerEventId) {
-      if (seenIds.has(providerEventId)) continue;
-      seenIds.add(providerEventId);
+      const existingIndex = indexById.get(providerEventId);
+      if (existingIndex != null) {
+        const prior = cleaned[existingIndex];
+        if (content.length >= prior.content.length) {
+          cleaned[existingIndex] = { role: turn.role, content, providerEventId };
+        }
+        continue;
+      }
+      indexById.set(providerEventId, cleaned.length);
+      cleaned.push({ role: turn.role, content, providerEventId });
+      continue;
     }
+
     const last = cleaned[cleaned.length - 1];
     if (last && last.role === turn.role && last.content === content) continue;
     cleaned.push({ role: turn.role, content, providerEventId });
@@ -57,33 +73,48 @@ export function planTranscriptUpsert(existing: StoredMessage[], turns: HistoryTu
   const incoming = normalizeTurns(turns);
   if (incoming.length === 0) return { type: "skip" };
 
-  const existingIds = new Set(
-    existing.map((message) => message.providerEventId).filter((id): id is string => Boolean(id)),
-  );
-  const prefix = commonPrefixLength(existing, incoming);
-  const updates: Array<{ sequenceNo: number; contentText: string; providerEventId?: string | null }> = [];
-
-  for (let index = 0; index < prefix; index += 1) {
-    const prior = existing[index];
-    const next = incoming[index];
-    if (
-      prior.contentText !== next.content &&
-      next.content.length >= prior.contentText.length &&
-      prior.role === next.role
-    ) {
-      updates.push({
-        sequenceNo: prior.sequenceNo,
-        contentText: next.content,
-        providerEventId: next.providerEventId ?? prior.providerEventId,
-      });
-    }
+  const byId = new Map<string, StoredMessage>();
+  const noIdKeys = new Set<string>();
+  for (const message of existing) {
+    const id = message.providerEventId?.trim();
+    if (id) byId.set(id, message);
+    else noIdKeys.add(contentKey(message.role, message.contentText));
   }
 
+  const updates: Array<{ sequenceNo: number; contentText: string; providerEventId?: string | null }> = [];
   const inserts: HistoryTurn[] = [];
-  for (const turn of incoming.slice(existing.length)) {
-    if (turn.providerEventId && existingIds.has(turn.providerEventId)) continue;
+
+  for (const turn of incoming) {
+    const id = turn.providerEventId?.trim() || null;
+    if (id) {
+      const prior = byId.get(id);
+      if (prior) {
+        if (
+          prior.role === turn.role &&
+          turn.content !== prior.contentText &&
+          turn.content.length >= prior.contentText.length
+        ) {
+          updates.push({
+            sequenceNo: prior.sequenceNo,
+            contentText: turn.content,
+            providerEventId: id,
+          });
+        }
+        continue;
+      }
+      inserts.push(turn);
+      byId.set(id, {
+        sequenceNo: -1,
+        role: turn.role,
+        contentText: turn.content,
+        providerEventId: id,
+      });
+      continue;
+    }
+
+    if (noIdKeys.has(contentKey(turn.role, turn.content))) continue;
     inserts.push(turn);
-    if (turn.providerEventId) existingIds.add(turn.providerEventId);
+    noIdKeys.add(contentKey(turn.role, turn.content));
   }
 
   if (updates.length === 0 && inserts.length === 0) return { type: "skip" };

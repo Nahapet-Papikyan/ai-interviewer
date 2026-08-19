@@ -1,15 +1,15 @@
 "use client";
 
-import { AnimatePresence, motion, useReducedMotion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
 import { useCases } from "@/components/landing/content";
-import { Reveal, easeOutExpo } from "@/components/landing/motion";
+import { Reveal, easeOutExpo, useSoftMotion } from "@/components/landing/motion";
 import { Eyebrow, Section } from "@/components/landing/ui";
 
 export function UseCases() {
   const [active, setActive] = useState<(typeof useCases)[number]["id"]>(useCases[0].id);
   const selected = useCases.find((item) => item.id === active) ?? useCases[0];
-  const reduce = useReducedMotion();
+  const { reduce, soft } = useSoftMotion();
 
   return (
     <Section id="use-cases">
@@ -33,9 +33,9 @@ export function UseCases() {
               >
                 {on ? (
                   <motion.span
-                    layoutId={reduce ? undefined : "usecase-active"}
+                    layoutId={reduce || soft ? undefined : "usecase-active"}
                     className="absolute inset-0 rounded-2xl border border-brand/40 bg-brand/8"
-                    transition={{ type: "spring", stiffness: 380, damping: 34 }}
+                    transition={{ duration: 0.28, ease: easeOutExpo }}
                   />
                 ) : (
                   <span className="absolute inset-0 rounded-2xl border border-white/10 bg-ink-2 transition-colors group-hover:border-white/16" />
@@ -52,10 +52,10 @@ export function UseCases() {
           <AnimatePresence mode="wait">
             <motion.div
               key={selected.id}
-              initial={reduce ? false : { opacity: 0, y: 14, filter: "blur(6px)" }}
-              animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-              exit={reduce ? undefined : { opacity: 0, y: -10, filter: "blur(6px)" }}
-              transition={{ duration: 0.32, ease: easeOutExpo }}
+              initial={reduce ? false : { opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={reduce ? undefined : { opacity: 0, y: -6 }}
+              transition={{ duration: soft ? 0.22 : 0.28, ease: easeOutExpo }}
             >
               <p className="text-[11px] font-semibold tracking-[0.16em] text-mist uppercase">Workflow</p>
               <h3 className="mt-2 text-xl font-medium text-cloud">{selected.title}</h3>
